@@ -1,0 +1,30 @@
+# ---- 数据文件不入库（体积大、可由脚本重新生成）----
+data/raw/*.csv
+data/generated/*.csv
+data/*.db
+data/*.db-journal
+data/*.db-wal
+data/*.db-shm
+
+# ---- 环境与密钥 ----
+.env
+.venv/
+venv/
+
+# ---- Python ----
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.ipynb_checkpoints/
+
+# ---- 本地个人存档（不入库）----
+# 说明：从主文档中抽出的个人存档类文本（如 *_本地存档.txt），仅本地保留，
+#       不进入仓库。用通配符而非点名具体文件，避免本文件反向暴露内容。
+*_本地存档.txt
+
+# ---- IDE / 系统 ----
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db

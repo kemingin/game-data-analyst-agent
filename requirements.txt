@@ -1,0 +1,20 @@
+# ============================================================
+# Game Data Analyst Agent - 依赖清单
+# 安装命令： pip install -r requirements.txt
+# ============================================================
+
+# --- 数据层 ---
+pandas>=2.0
+numpy>=1.24
+
+# --- Agent 层 ---
+openai>=1.30            # DeepSeek / 智谱GLM 都兼容 OpenAI SDK 格式
+python-dotenv>=1.0      # 从 .env 文件读取 API Key，不把密钥写进代码
+
+# --- 前端层 ---
+streamlit>=1.32
+plotly>=5.18
+
+# --- 评测与测试 ---
+tabulate>=0.9
+pytest>=7.0             # 跑单元测试：python -m pytest -q

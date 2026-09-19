@@ -1,0 +1,315 @@
+{
+  "meta": {
+    "registry_name": "游戏运营核心指标注册表",
+    "registry_version": "1.0",
+    "updated_at": "2026-09-18",
+    "owner": "数据与增长部 · 指标委员会",
+    "data_window": { "start": "2026-06-20", "end": "2026-09-17", "days": 90 },
+    "date_expression": "@data_end / @data_start，可带 +N / -N 天偏移（例：@data_end-6 表示数据截止日前推 6 天）。data_end 取自 src/config.py 的 DATA_END。",
+    "description": "本文件是「指标语义层」的单一事实来源（Single Source of Truth）。LLM 只负责把用户问题映射成 metric_id 并抽取参数，SQL 一律由程序按这里的模板填充生成，LLM 永远不直接写 SQL。",
+    "design_principles": [
+      "口径唯一：同一指标在全项目只有一份定义，避免「同名不同义」。",
+      "模板受控：SQL 模板是预审过的白名单资产，参数只走占位符，杜绝拼接注入。",
+      "来源可溯：每个指标显式声明 source_tables，校验器会强制 SQL 只能碰这些表。",
+      "参数显式：每个参数有类型、默认值、枚举范围与业务解释，便于 LLM 抽取与程序校验。",
+      "口径警告前置：容易算错的点（留存分母、MAU 滚动窗口）直接写进业务定义，让人和模型都看得见。"
+    ]
+  },
+  "metrics": [
+    {
+      "metric_id": "dau",
+      "metric_name": "日活跃用户数（DAU）",
+      "aliases": ["DAU", "日活", "日活跃用户数", "日活跃用户", "每天活跃人数", "活跃用户趋势", "日活走势"],
+      "category": "活跃",
+      "business_definition": "统计区间内，每一天发生过登录行为的去重用户数。本项目的活跃口径唯一来源是 user_daily_snapshot.is_active = 1，它与「当天存在登录事件」完全等价；不要用「局内对战」判定活跃，那会漏掉只登录、没开局的用户。",
+      "unit": "人",
+      "good_direction": "up",
+      "params": [
+        { "name": "start_date", "type": "date", "required": false, "default": "@data_end-6", "label": "开始日期", "description": "统计起始日期（含）。默认最近 7 天。" },
+        { "name": "end_date", "type": "date", "required": false, "default": "@data_end", "label": "结束日期", "description": "统计截止日期（含）。默认数据截止日。" }
+      ],
+      "dimensions": ["date"],
+      "source_tables": ["user_daily_snapshot"],
+      "sql_template": "SELECT date,\n       SUM(is_active) AS dau\nFROM user_daily_snapshot\nWHERE date BETWEEN :start_date AND :end_date\nGROUP BY date\nORDER BY date",
+      "output_columns": [
+        { "name": "date", "description": "日期" },
+        { "name": "dau", "description": "当日活跃用户数" }
+      ],
+      "notes": "SUM(is_active) 直接得到活跃人数，因为 is_active 只有 0/1 两个取值，求和即计数。",
+      "owner": "数据与增长部 · 数据分析师",
+      "updated_at": "2026-09-18"
+    },
+    {
+      "metric_id": "mau",
+      "metric_name": "月活跃用户数（MAU，滚动 30 天）",
+      "aliases": ["MAU", "月活", "月活跃用户数", "月活跃用户", "近30天活跃用户数"],
+      "category": "活跃",
+      "business_definition": "以统计截止日为终点、向前滚动 30 天窗口内的去重活跃用户数。必须使用滚动窗口：如果把 90 天全窗口的去重活跃用户当成 MAU，几乎所有注册用户都会被算进来（每人注册当天必然活跃），指标会虚高到等于总用户数。",
+      "unit": "人",
+      "good_direction": "up",
+      "params": [
+        { "name": "end_date", "type": "date", "required": false, "default": "@data_end", "label": "统计截止日", "description": "滚动窗口的终点（含）。默认数据截止日。" }
+      ],
+      "dimensions": ["date"],
+      "source_tables": ["user_daily_snapshot"],
+      "sql_template": "SELECT COUNT(DISTINCT user_id) AS mau\nFROM user_daily_snapshot\nWHERE is_active = 1\n  AND date > date(:end_date, '-30 day')\n  AND date <= :end_date",
+      "output_columns": [
+        { "name": "mau", "description": "窗口内去重活跃用户数" }
+      ],
+      "notes": "窗口取 (end_date-30, end_date]，恰好 30 天。date(x, '-30 day') 是 SQLite 的日期运算函数。",
+      "owner": "数据与增长部 · 数据分析师",
+      "updated_at": "2026-09-18"
+    },
+    {
+      "metric_id": "stickiness",
+      "metric_name": "用户粘性（DAU/MAU）",
+      "aliases": ["用户粘性", "DAU/MAU", "粘性", "活跃度", "活跃集中度", "DAU MAU 比值"],
+      "category": "活跃",
+      "business_definition": "近 30 天的平均日活 ÷ 近 30 天的月活。反映用户在一个月内的平均活跃天数占比，行业参考区间 10%~25%，越高说明用户使用越频繁。",
+      "unit": "%",
+      "good_direction": "up",
+      "params": [
+        { "name": "end_date", "type": "date", "required": false, "default": "@data_end", "label": "统计截止日", "description": "30 天窗口的终点（含）。默认数据截止日。" }
+      ],
+      "dimensions": ["date"],
+      "source_tables": ["user_daily_snapshot"],
+      "sql_template": "WITH daily AS (\n  SELECT date,\n         SUM(is_active) AS dau\n  FROM user_daily_snapshot\n  WHERE date > date(:end_date, '-30 day')\n    AND date <= :end_date\n  GROUP BY date\n),\nmau AS (\n  SELECT COUNT(DISTINCT user_id) AS mau\n  FROM user_daily_snapshot\n  WHERE is_active = 1\n    AND date > date(:end_date, '-30 day')\n    AND date <= :end_date\n)\nSELECT ROUND(AVG(daily.dau), 1) AS avg_dau,\n       (SELECT mau FROM mau) AS mau,\n       ROUND(100.0 * AVG(daily.dau) / (SELECT mau FROM mau), 2) AS stickiness_pct\nFROM daily",
+      "output_columns": [
+        { "name": "avg_dau", "description": "近 30 天平均日活" },
+        { "name": "mau", "description": "近 30 天月活" },
+        { "name": "stickiness_pct", "description": "粘性百分比" }
+      ],
+      "notes": "这里第一次出现 CTE（WITH ... AS）。CTE 可以理解成「临时具名子查询」，让 SQL 分步骤表达，比一层层嵌套更好读。",
+      "owner": "数据与增长部 · 数据分析师",
+      "updated_at": "2026-09-18"
+    },
+    {
+      "metric_id": "retention_rate",
+      "metric_name": "留存率（D1 / D7 / D30）",
+      "aliases": ["留存率", "留存", "次日留存", "次日留存率", "次留", "7日留存", "七日留存", "7日留存率", "30日留存", "三十日留存", "D1", "D7", "D30", "新用户留存"],
+      "category": "留存",
+      "business_definition": "某批新增用户中，在注册后第 N 天仍然活跃的用户占比。分母必须剔除「注册日 + N 天 > 数据截止日」的用户，因为这些用户根本观察不到第 N 天，若计入分母会人为压低留存率。这是留存最容易被算错的地方。",
+      "unit": "%",
+      "good_direction": "up",
+      "params": [
+        { "name": "day_n", "type": "int", "required": false, "default": 1, "enum": [1, 7, 30], "label": "留存天数 N", "description": "1=次日留存(D1)，7=7日留存(D7)，30=30日留存(D30)。用户说「次留」取 1，「七日留存」取 7。" },
+        { "name": "cohort_start", "type": "date", "required": false, "default": "@data_end-6-:day_n", "label": "新增用户起始日", "description": "按注册日期圈定用户批次（含）。默认「数据截止日往前 6+N 天」——整体前移 N 天，保证这批用户的第 N 天都能被观测到。" },
+        { "name": "cohort_end", "type": "date", "required": false, "default": "@data_end-:day_n", "label": "新增用户截止日", "description": "按注册日期圈定用户批次（含）。默认「数据截止日往前 N 天」。之所以不直接取数据截止日，是因为最后 N 天注册的用户还不满 N 天，无法观测。" }
+      ],
+      "dimensions": ["date", "channel", "version", "user_group"],
+      "source_tables": ["dim_user", "user_daily_snapshot"],
+      "sql_template": "WITH data_end AS (\n  SELECT MAX(date) AS max_date\n  FROM user_daily_snapshot\n),\ncohort AS (\n  SELECT u.user_id,\n         u.register_date\n  FROM dim_user u\n  CROSS JOIN data_end d\n  WHERE u.register_date BETWEEN :cohort_start AND :cohort_end\n    AND u.register_date <= date(d.max_date, '-' || CAST(:day_n AS TEXT) || ' day')\n)\nSELECT COUNT(*) AS cohort_size,\n       SUM(s.is_active) AS retained_users,\n       ROUND(100.0 * SUM(s.is_active) / COUNT(*), 2) AS retention_rate_pct\nFROM cohort c\nJOIN user_daily_snapshot s\n  ON s.user_id = c.user_id\n AND s.date = date(c.register_date, '+' || CAST(:day_n AS TEXT) || ' day')",
+      "output_columns": [
+        { "name": "cohort_size", "description": "该批新增用户数（留存分母）" },
+        { "name": "retained_users", "description": "第 N 天仍活跃的人数（留存分子）" },
+        { "name": "retention_rate_pct", "description": "留存率百分比" }
+      ],
+      "notes": "两个关键技巧：① CROSS JOIN 把「数据截止日」当标量注入每一行；② JOIN 条件里用 date(register_date, '+N day') 直接定位到第 N 天那一行，比先查再筛更简单也更不容易错。",
+      "owner": "数据与增长部 · 数据分析师",
+      "updated_at": "2026-09-18"
+    },
+    {
+      "metric_id": "new_user_count",
+      "metric_name": "新增用户数",
+      "aliases": ["新增用户数", "新增用户", "新用户数", "新用户", "注册用户数", "每天新增", "拉新量", "拉新"],
+      "category": "增长",
+      "business_definition": "按注册日期统计的新增用户数，口径以 dim_user.register_date 为准，每人一条记录，天然去重，不需要 COUNT(DISTINCT)。",
+      "unit": "人",
+      "good_direction": "up",
+      "params": [
+        { "name": "start_date", "type": "date", "required": false, "default": "@data_end-6", "label": "开始日期", "description": "统计起始日期（含）。默认最近 7 天。" },
+        { "name": "end_date", "type": "date", "required": false, "default": "@data_end", "label": "结束日期", "description": "统计截止日期（含）。默认数据截止日。" }
+      ],
+      "dimensions": ["date", "channel", "version"],
+      "source_tables": ["dim_user"],
+      "sql_template": "SELECT register_date AS date,\n       COUNT(*) AS new_users\nFROM dim_user\nWHERE register_date BETWEEN :start_date AND :end_date\nGROUP BY register_date\nORDER BY register_date",
+      "output_columns": [
+        { "name": "date", "description": "注册日期" },
+        { "name": "new_users", "description": "当日新增用户数" }
+      ],
+      "notes": "新增、留存、活跃是三个必须对齐的口径：新增看 dim_user.register_date，活跃与留存看 user_daily_snapshot.is_active，三者不要混用。",
+      "owner": "数据与增长部 · 数据分析师",
+      "updated_at": "2026-09-18"
+    },
+    {
+      "metric_id": "payment_rate",
+      "metric_name": "付费转化率",
+      "aliases": ["付费转化率", "付费率", "付费渗透率", "付费用户占比", "付费比例"],
+      "category": "商业化",
+      "business_definition": "统计区间内有过付费行为的用户数 ÷ 同期活跃用户数。分母用「活跃用户」而不是「全部注册用户」，否则会把历史存量用户算进来，稀释当期指标。",
+      "unit": "%",
+      "good_direction": "up",
+      "params": [
+        { "name": "start_date", "type": "date", "required": false, "default": "@data_end-6", "label": "开始日期", "description": "统计起始日期（含）。默认最近 7 天。" },
+        { "name": "end_date", "type": "date", "required": false, "default": "@data_end", "label": "结束日期", "description": "统计截止日期（含）。默认数据截止日。" }
+      ],
+      "dimensions": ["date", "channel", "user_group"],
+      "source_tables": ["user_daily_snapshot"],
+      "sql_template": "WITH act AS (\n  SELECT DISTINCT user_id\n  FROM user_daily_snapshot\n  WHERE is_active = 1\n    AND date BETWEEN :start_date AND :end_date\n),\npay AS (\n  SELECT DISTINCT user_id\n  FROM user_daily_snapshot\n  WHERE revenue > 0\n    AND date BETWEEN :start_date AND :end_date\n)\nSELECT (SELECT COUNT(*) FROM act) AS active_users,\n       (SELECT COUNT(*) FROM pay) AS payers,\n       ROUND(100.0 * (SELECT COUNT(*) FROM pay) / (SELECT COUNT(*) FROM act), 2) AS payment_rate_pct",
+      "output_columns": [
+        { "name": "active_users", "description": "区间内活跃用户数（分母）" },
+        { "name": "payers", "description": "区间内付费用户数（分子）" },
+        { "name": "payment_rate_pct", "description": "付费转化率百分比" }
+      ],
+      "notes": "revenue > 0 判断付费，比去 game_event_log 里找「充值」事件更快（不用回表），且两者金额已校验一致。",
+      "owner": "数据与增长部 · 数据分析师",
+      "updated_at": "2026-09-18"
+    },
+    {
+      "metric_id": "arpu",
+      "metric_name": "每活跃用户平均收入（ARPU）",
+      "aliases": ["ARPU", "每活跃用户平均收入", "活跃用户人均付费", "人均收入", "人均流水"],
+      "category": "商业化",
+      "business_definition": "统计区间内的总流水 ÷ 同期活跃用户数。注意 ARPU 的分母是全体活跃用户，ARPPU 的分母只是付费用户，两者不要混用。",
+      "unit": "元",
+      "good_direction": "up",
+      "params": [
+        { "name": "start_date", "type": "date", "required": false, "default": "@data_end-6", "label": "开始日期", "description": "统计起始日期（含）。默认最近 7 天。" },
+        { "name": "end_date", "type": "date", "required": false, "default": "@data_end", "label": "结束日期", "description": "统计截止日期（含）。默认数据截止日。" }
+      ],
+      "dimensions": ["date", "channel", "user_group"],
+      "source_tables": ["user_daily_snapshot"],
+      "sql_template": "SELECT ROUND(SUM(revenue), 2) AS total_revenue,\n       COUNT(DISTINCT CASE WHEN is_active = 1 THEN user_id END) AS active_users,\n       ROUND(SUM(revenue) / COUNT(DISTINCT CASE WHEN is_active = 1 THEN user_id END), 2) AS arpu\nFROM user_daily_snapshot\nWHERE date BETWEEN :start_date AND :end_date",
+      "output_columns": [
+        { "name": "total_revenue", "description": "区间总流水（元）" },
+        { "name": "active_users", "description": "区间活跃用户数（分母）" },
+        { "name": "arpu", "description": "每活跃用户平均收入（元）" }
+      ],
+      "notes": "COUNT(DISTINCT CASE WHEN ... THEN user_id END) 是「条件去重计数」的标准写法：CASE 只对满足条件的行为返回 user_id（否则 NULL，NULL 不参与 COUNT），再外层 DISTINCT 去重。它等价于「先过滤再 COUNT(DISTINCT)」，但一条 SQL 就同时算出了分子和分母。",
+      "owner": "数据与增长部 · 数据分析师",
+      "updated_at": "2026-09-18"
+    },
+    {
+      "metric_id": "arppu",
+      "metric_name": "付费用户人均付费（ARPPU）",
+      "aliases": ["ARPPU", "付费用户人均付费", "付费用户人均流水", "客单价", "人均付费", "付费ARPU"],
+      "category": "商业化",
+      "business_definition": "统计区间内的总流水 ÷ 同期付费用户数。反映「已经愿意付费的人平均花多少钱」，是定价与礼包设计的关键参考。",
+      "unit": "元",
+      "good_direction": "up",
+      "params": [
+        { "name": "start_date", "type": "date", "required": false, "default": "@data_end-6", "label": "开始日期", "description": "统计起始日期（含）。默认最近 7 天。" },
+        { "name": "end_date", "type": "date", "required": false, "default": "@data_end", "label": "结束日期", "description": "统计截止日期（含）。默认数据截止日。" }
+      ],
+      "dimensions": ["date", "channel", "user_group"],
+      "source_tables": ["user_daily_snapshot"],
+      "sql_template": "SELECT ROUND(SUM(revenue), 2) AS total_revenue,\n       COUNT(DISTINCT CASE WHEN revenue > 0 THEN user_id END) AS payers,\n       ROUND(SUM(revenue) / COUNT(DISTINCT CASE WHEN revenue > 0 THEN user_id END), 2) AS arppu\nFROM user_daily_snapshot\nWHERE date BETWEEN :start_date AND :end_date",
+      "output_columns": [
+        { "name": "total_revenue", "description": "区间总流水（元）" },
+        { "name": "payers", "description": "区间付费用户数" },
+        { "name": "arppu", "description": "付费用户人均付费（元）" }
+      ],
+      "notes": "ARPPU 恒大于等于 ARPU（分母更小），两者比值恰好是付费转化率的倒数关系，可以互相验证。",
+      "owner": "数据与增长部 · 数据分析师",
+      "updated_at": "2026-09-18"
+    },
+    {
+      "metric_id": "ltv",
+      "metric_name": "用户生命周期价值（LTV）",
+      "aliases": ["LTV", "用户生命周期价值", "生命周期价值", "生命周期总价值", "用户价值", "LTV30", "用户终身价值"],
+      "category": "商业化",
+      "business_definition": "一批新增用户，在注册后 N 天观察窗口内的累计人均付费。本项目的简化口径为「观察窗口内的累计付费额 ÷ 该批新增用户数」，不做折现、不做生命周期外推，属于行业常用的「LTV_N」口径。",
+      "unit": "元",
+      "good_direction": "up",
+      "params": [
+        { "name": "window_days", "type": "int", "required": false, "default": 30, "label": "观察窗口天数", "description": "从注册日起观察多少天，常用 7 / 30 / 90。" },
+        { "name": "cohort_start", "type": "date", "required": false, "default": "@data_end-59", "label": "新增用户起始日", "description": "批次起始日（含）。默认取「数据截止日前 59 天」，保证 30 天窗口能被完整观测。" },
+        { "name": "cohort_end", "type": "date", "required": false, "default": "@data_end-30", "label": "新增用户截止日", "description": "批次截止日（含）。默认取「数据截止日前 30 天」，保证 30 天窗口能被完整观测。" }
+      ],
+      "dimensions": ["date", "channel", "version"],
+      "source_tables": ["dim_user", "user_daily_snapshot"],
+      "sql_template": "WITH cohort AS (\n  SELECT user_id,\n         register_date\n  FROM dim_user\n  WHERE register_date BETWEEN :cohort_start AND :cohort_end\n),\nrev AS (\n  SELECT c.user_id,\n         SUM(s.revenue) AS user_revenue\n  FROM cohort c\n  JOIN user_daily_snapshot s\n    ON s.user_id = c.user_id\n   AND s.date >= c.register_date\n   AND s.date <= date(c.register_date, '+' || CAST(:window_days AS TEXT) || ' day')\n  GROUP BY c.user_id\n)\nSELECT COUNT(*) AS cohort_size,\n       ROUND(SUM(user_revenue), 2) AS total_revenue,\n       ROUND(SUM(user_revenue) / COUNT(*), 2) AS ltv\nFROM rev",
+      "output_columns": [
+        { "name": "cohort_size", "description": "该批新增用户数" },
+        { "name": "total_revenue", "description": "该批用户在窗口内的累计付费（元）" },
+        { "name": "ltv", "description": "人均生命周期价值（元）" }
+      ],
+      "notes": "LTV 与 CAC 配对才有意义：dim_channel.cost_per_user 就是获客成本 CAC，LTV/CAC 大于 3 通常被视为买量健康线。默认参数特意把批次截止日设成 data_end-30，是为了让每个用户都能被完整观察满 30 天，否则新用户观察期不足会低估 LTV。",
+      "owner": "数据与增长部 · 数据分析师",
+      "updated_at": "2026-09-18"
+    },
+    {
+      "metric_id": "tutorial_funnel",
+      "metric_name": "新手引导漏斗转化率",
+      "aliases": ["新手引导漏斗", "新手引导转化率", "新手引导完成率", "引导漏斗", "教程漏斗", "上手漏斗", "新手漏斗", "引导流失"],
+      "category": "留存",
+      "business_definition": "一批新增用户从「注册」→「新手引导_步骤1」→「新手引导_步骤2」→「新手引导_步骤3」的逐级转化情况。逐步转化率回答「哪一步流失最多」，整体完成率回答「最终有多少人走完引导」。",
+      "unit": "%",
+      "good_direction": "up",
+      "params": [
+        { "name": "start_date", "type": "date", "required": false, "default": "@data_end-6", "label": "新增用户起始日", "description": "按注册日期圈定用户批次（含）。默认最近 7 天。" },
+        { "name": "end_date", "type": "date", "required": false, "default": "@data_end", "label": "新增用户截止日", "description": "按注册日期圈定用户批次（含）。默认数据截止日。" }
+      ],
+      "dimensions": ["date", "channel"],
+      "source_tables": ["dim_user", "game_event_log"],
+      "sql_template": "WITH cohort AS (\n  SELECT user_id\n  FROM dim_user\n  WHERE register_date BETWEEN :start_date AND :end_date\n),\nfunnel AS (\n  SELECT (SELECT COUNT(*) FROM cohort) AS step0_registered,\n         (SELECT COUNT(DISTINCT user_id) FROM game_event_log\n           WHERE event_name = '新手引导_步骤1' AND user_id IN (SELECT user_id FROM cohort)) AS step1_started,\n         (SELECT COUNT(DISTINCT user_id) FROM game_event_log\n           WHERE event_name = '新手引导_步骤2' AND user_id IN (SELECT user_id FROM cohort)) AS step2_mid,\n         (SELECT COUNT(DISTINCT user_id) FROM game_event_log\n           WHERE event_name = '新手引导_步骤3' AND user_id IN (SELECT user_id FROM cohort)) AS step3_done\n)\nSELECT step0_registered,\n       step1_started,\n       step2_mid,\n       step3_done,\n       ROUND(100.0 * step1_started / step0_registered, 2) AS step1_conv_pct,\n       ROUND(100.0 * step2_mid / step1_started, 2) AS step2_conv_pct,\n       ROUND(100.0 * step3_done / step2_mid, 2) AS step3_conv_pct,\n       ROUND(100.0 * step3_done / step0_registered, 2) AS tutorial_completion_pct\nFROM funnel",
+      "output_columns": [
+        { "name": "step0_registered", "description": "注册人数（漏斗第一层）" },
+        { "name": "step1_started", "description": "完成引导步骤 1 的人数" },
+        { "name": "step2_mid", "description": "完成引导步骤 2 的人数" },
+        { "name": "step3_done", "description": "完成引导步骤 3 的人数" },
+        { "name": "step1_conv_pct", "description": "步骤1 转化率（相对注册）" },
+        { "name": "step2_conv_pct", "description": "步骤2 逐步转化率（相对步骤1）" },
+        { "name": "step3_conv_pct", "description": "步骤3 逐步转化率（相对步骤2）" },
+        { "name": "tutorial_completion_pct", "description": "新手引导整体完成率（相对注册）" }
+      ],
+      "notes": "漏斗必须单调递减。生成脚本用「累计漏斗」写事件（step3 的人一定也是 step2 的人），所以这里用 COUNT(DISTINCT user_id) 就一定是递减的。逐级转化率能直接定位到瓶颈步骤。",
+      "owner": "数据与增长部 · 数据分析师",
+      "updated_at": "2026-09-18"
+    },
+    {
+      "metric_id": "channel_retention",
+      "metric_name": "渠道留存对比（渠道分群）",
+      "aliases": ["渠道留存对比", "渠道留存", "分渠道留存", "渠道分群对比", "渠道分群", "渠道质量", "各渠道留存", "买量渠道效果", "渠道效果对比"],
+      "category": "渠道",
+      "business_definition": "按获客渠道分组，对比各渠道新增用户的第 N 天留存率。用于判断「哪个渠道来的用户更留得住」，结合 dim_channel.cost_per_user（获客成本）即可进一步算买量 ROI。",
+      "unit": "%",
+      "good_direction": "up",
+      "params": [
+        { "name": "day_n", "type": "int", "required": false, "default": 1, "enum": [1, 7, 30], "label": "留存天数 N", "description": "1=次日留存(D1)，7=7日留存(D7)，30=30日留存(D30)。" },
+        { "name": "cohort_start", "type": "date", "required": false, "default": "@data_end-29-:day_n", "label": "新增用户起始日", "description": "批次起始日（含）。默认「数据截止日往前 29+N 天」，保证 30 天样本量且第 N 天可观测。" },
+        { "name": "cohort_end", "type": "date", "required": false, "default": "@data_end-:day_n", "label": "新增用户截止日", "description": "批次截止日（含）。默认「数据截止日往前 N 天」，剔除观察期不足的用户。" }
+      ],
+      "dimensions": ["channel", "date"],
+      "source_tables": ["dim_user", "dim_channel", "user_daily_snapshot"],
+      "sql_template": "WITH data_end AS (\n  SELECT MAX(date) AS max_date\n  FROM user_daily_snapshot\n),\ncohort AS (\n  SELECT u.user_id,\n         u.register_date,\n         ch.channel_name\n  FROM dim_user u\n  JOIN dim_channel ch ON ch.channel_id = u.channel_id\n  CROSS JOIN data_end d\n  WHERE u.register_date BETWEEN :cohort_start AND :cohort_end\n    AND u.register_date <= date(d.max_date, '-' || CAST(:day_n AS TEXT) || ' day')\n)\nSELECT c.channel_name,\n       COUNT(*) AS cohort_size,\n       SUM(s.is_active) AS retained_users,\n       ROUND(100.0 * SUM(s.is_active) / COUNT(*), 2) AS retention_rate_pct\nFROM cohort c\nJOIN user_daily_snapshot s\n  ON s.user_id = c.user_id\n AND s.date = date(c.register_date, '+' || CAST(:day_n AS TEXT) || ' day')\nGROUP BY c.channel_name\nORDER BY retention_rate_pct DESC",
+      "output_columns": [
+        { "name": "channel_name", "description": "渠道名称" },
+        { "name": "cohort_size", "description": "该渠道新增用户数" },
+        { "name": "retained_users", "description": "第 N 天仍活跃人数" },
+        { "name": "retention_rate_pct", "description": "该渠道留存率" }
+      ],
+      "notes": "对比类分析的关键是「控制变量」：这里固定了时间区间和留存天数，只让渠道变化，结论才可信。若各渠道样本量差异过大，小样本渠道的留存率波动会很大，解读时要看 cohort_size。",
+      "owner": "数据与增长部 · 数据分析师",
+      "updated_at": "2026-09-18"
+    },
+    {
+      "metric_id": "version_retention",
+      "metric_name": "版本前后新用户留存对比",
+      "aliases": ["版本前后对比", "版本对比", "版本留存对比", "新版本效果", "版本上线效果", "版本更新后留存", "版本迭代效果"],
+      "category": "版本",
+      "business_definition": "以某个版本的上线日为分界，把新增用户划分为「版本上线后」「版本上线前两周」「更早」三个批次，对比各批次的第 N 天留存率。这是评估版本改动（尤其是新手引导改版）是否有效最直接的方式。",
+      "unit": "%",
+      "good_direction": "up",
+      "params": [
+        { "name": "version_id", "type": "string", "required": false, "default": "v2.0.0", "enum": ["v1.9.0", "v2.0.0"], "label": "版本号", "description": "对比哪个版本的前后变化。默认 v2.0.0（竞技新纪元）。" },
+        { "name": "day_n", "type": "int", "required": false, "default": 1, "enum": [1, 7, 30], "label": "留存天数 N", "description": "1=次日留存(D1)，7=7日留存(D7)，30=30日留存(D30)。" },
+        { "name": "before_days", "type": "int", "required": false, "default": 14, "label": "版本前对比窗口天数", "description": "「版本上线前」这一档取多长时间，用户说「前两周」就是 14。" },
+        { "name": "history_days", "type": "int", "required": false, "default": 28, "label": "回溯总天数", "description": "从版本上线日向前回溯多少天纳入分析，决定「更早」这一档的范围。" },
+        { "name": "cohort_end", "type": "date", "required": false, "default": "@data_end", "label": "新增用户截止日", "description": "批次截止日（含）。默认数据截止日。" }
+      ],
+      "dimensions": ["version", "date"],
+      "source_tables": ["dim_user", "dim_version", "user_daily_snapshot"],
+      "sql_template": "WITH data_end AS (\n  SELECT MAX(date) AS max_date\n  FROM user_daily_snapshot\n),\nver AS (\n  SELECT release_date\n  FROM dim_version\n  WHERE version_id = :version_id\n),\nbase AS (\n  SELECT u.user_id,\n         u.register_date,\n         CASE\n           WHEN u.register_date >= (SELECT release_date FROM ver) THEN '版本上线后'\n           WHEN u.register_date >= date((SELECT release_date FROM ver), '-' || CAST(:before_days AS TEXT) || ' day') THEN '版本上线前两周'\n           ELSE '更早（前 15~28 天）'\n         END AS version_segment\n  FROM dim_user u\n  CROSS JOIN data_end d\n  WHERE u.register_date >= date((SELECT release_date FROM ver), '-' || CAST(:history_days AS TEXT) || ' day')\n    AND u.register_date <= :cohort_end\n    AND u.register_date <= date(d.max_date, '-' || CAST(:day_n AS TEXT) || ' day')\n)\nSELECT version_segment,\n       COUNT(*) AS cohort_size,\n       SUM(s.is_active) AS retained_users,\n       ROUND(100.0 * SUM(s.is_active) / COUNT(*), 2) AS retention_rate_pct\nFROM base b\nJOIN user_daily_snapshot s\n  ON s.user_id = b.user_id\n AND s.date = date(b.register_date, '+' || CAST(:day_n AS TEXT) || ' day')\nGROUP BY version_segment\nORDER BY CASE version_segment\n           WHEN '版本上线后' THEN 1\n           WHEN '版本上线前两周' THEN 2\n           ELSE 3\n         END",
+      "output_columns": [
+        { "name": "version_segment", "description": "批次：版本上线后 / 版本上线前两周 / 更早" },
+        { "name": "cohort_size", "description": "该批次新增用户数" },
+        { "name": "retained_users", "description": "第 N 天仍活跃人数" },
+        { "name": "retention_rate_pct", "description": "该批次留存率" }
+      ],
+      "notes": "版本对比最容易犯的错误是「只看留存不看样本量」和「忽略节假日等混淆因素」。这里把三档的 cohort_size 一起返回，就是为了让人先看样本再下结论。",
+      "owner": "数据与增长部 · 数据分析师",
+      "updated_at": "2026-09-18"
+    }
+  ]
+}

@@ -1,0 +1,25 @@
+# ============================================================================
+# 行尾符统一策略
+# ============================================================================
+# 背景：本项目在 Windows 上开发。不显式声明的话，git 会对每个文本文件警告
+#       "LF will be replaced by CRLF the next time Git touches it" ——
+#       同一个文件在不同平台上存成不同行尾，协作时会出现
+#       「一行没改、整个文件却都变了」的假 diff。
+#
+# 策略：仓库内一律存 LF（跨平台安全），检出时不做转换。
+#       这样 Windows 与 Linux / macOS 拿到的是同一份内容。
+
+* text=auto eol=lf
+
+# --- 二进制文件：禁止任何行尾转换（转换会损坏文件）---
+*.db      binary
+*.db-shm  binary
+*.db-wal  binary
+*.xlsx    binary
+*.png     binary
+*.jpg     binary
+*.ico     binary
+
+# --- Windows 批处理脚本：必须保留 CRLF，否则可能无法执行 ---
+*.bat  text eol=crlf
+*.cmd  text eol=crlf

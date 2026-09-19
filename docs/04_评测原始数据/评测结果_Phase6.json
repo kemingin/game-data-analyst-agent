@@ -1,0 +1,872 @@
+{
+  "meta": {
+    "eval_set": "eval_set.json",
+    "eval_set_version": "1.0",
+    "data_window": [
+      "2026-06-20",
+      "2026-09-17"
+    ]
+  },
+  "summary": {
+    "total": 18,
+    "metric_mapping_rate": 1.0,
+    "param_rate": 1.0,
+    "number_rate": 0.9702,
+    "refuse_rate": 1.0,
+    "avg_tokens": 6796.4,
+    "avg_elapsed_ms": 3271.8,
+    "avg_iterations": 2.67
+  },
+  "cases": [
+    {
+      "case_id": "E01",
+      "question": "最近 7 天的日活怎么样？",
+      "category": "活跃",
+      "ok": true,
+      "answer": "**结论：最近 7 天日活整体在 465~544 人之间，呈小幅上行趋势，周末（9/13）是峰值。**\n\n数据依据（2026-09-11 ~ 09-17）：\n- 9/11：465 人（区间最低）\n- 9/12：497 人\n- 9/13：544 人（区间最高，周日）\n- 9/14：509 人\n- 9/15：534 人\n- 9/16：537 人\n- 9/17：533 人\n\n7 天平均约 517 人，最低点到最高点涨了约 17.0%。走势上是「周初偏低、周末冲高、之后稳定在 530 上下」，最近三天（9/15~9/17）基本持平，没有继续往上走。\n\n需要提醒的是，这个量级（几百人）属于小样本，单日波动几十人属正常范围，不建议只看单天涨跌下判断。\n\n要不要我再拉一下同期的新增用户数和留存率？日活的变化通常要么来自拉新、要么来自老用户回流/流失，这两个指标能帮你判断这波上行是「新血」还是「老用户变活跃」。",
+      "error": null,
+      "metric_mapping_ok": true,
+      "params_ok": null,
+      "params_detail": {},
+      "number_total": 12,
+      "number_traceable": 12,
+      "unexplained_numbers": [],
+      "expect_no_query": false,
+      "refuse_ok": false,
+      "actual_calls": [
+        {
+          "metric_id": "dau",
+          "params": {
+            "start_date": "2026-09-11",
+            "end_date": "2026-09-17"
+          },
+          "ok": true
+        }
+      ],
+      "reference_metric_id": "dau",
+      "reference_params": {
+        "start_date": "2026-09-11",
+        "end_date": "2026-09-17"
+      },
+      "iterations": 2,
+      "usage": {
+        "llm_calls": 2,
+        "prompt_tokens": 4757,
+        "completion_tokens": 398,
+        "total_tokens": 5155,
+        "cached_tokens": 2304
+      },
+      "elapsed_ms": 5911.42,
+      "provider": "deepseek",
+      "model": "deepseek-chat"
+    },
+    {
+      "case_id": "E02",
+      "question": "现在的月活跃用户数是多少？",
+      "category": "活跃",
+      "ok": true,
+      "answer": "**最新月活跃用户数（MAU）为 4,649 人。**\n\n口径说明：这是以 2026-09-17 为截止日、向前滚动 30 天（即 2026-08-19 ~ 2026-09-17）窗口内的去重活跃用户数，不是把整个 90 天窗口的用户都算进来。\n\n如果你想看这个数字的变化趋势，或者想结合用户粘性（DAU/MAU）一起判断活跃质量，我可以再帮你查。",
+      "error": null,
+      "metric_mapping_ok": true,
+      "params_ok": null,
+      "params_detail": {},
+      "number_total": 1,
+      "number_traceable": 1,
+      "unexplained_numbers": [],
+      "expect_no_query": false,
+      "refuse_ok": false,
+      "actual_calls": [
+        {
+          "metric_id": "mau",
+          "params": {
+            "end_date": "2026-09-17"
+          },
+          "ok": true
+        }
+      ],
+      "reference_metric_id": "mau",
+      "reference_params": {
+        "end_date": "2026-09-17"
+      },
+      "iterations": 2,
+      "usage": {
+        "llm_calls": 2,
+        "prompt_tokens": 4616,
+        "completion_tokens": 211,
+        "total_tokens": 4827,
+        "cached_tokens": 4096
+      },
+      "elapsed_ms": 2073.59,
+      "provider": "deepseek",
+      "model": "deepseek-chat"
+    },
+    {
+      "case_id": "E03",
+      "question": "用户粘性现在是多少？",
+      "category": "活跃",
+      "ok": true,
+      "answer": "**结论：当前用户粘性为 10.08%**（截至 2026-09-17）。\n\n数据依据：近 30 天平均日活 468.5 人，近 30 天月活 4649 人，两者相除得到 10.08%。这个数字的含义是——一个月内活跃用户平均只有约 3 天打开游戏。\n\n参考行业区间 10%~25%，目前处于**下沿位置**，说明用户使用频率偏低，活跃集中度不高。\n\n需要提醒的是：粘性偏低通常有两种可能，一是新增用户占比高、老用户还没养成习惯，二是核心玩法对老用户的召回力不足。要判断是哪一种，建议结合**新增用户数**和**留存率**一起看。需要我拉一下最近的新增和次留数据吗？\n\n以上建议需人工复核后执行，建议结合买量成本、竞品动态等因素共同判断。",
+      "error": null,
+      "metric_mapping_ok": true,
+      "params_ok": null,
+      "params_detail": {},
+      "number_total": 6,
+      "number_traceable": 6,
+      "unexplained_numbers": [],
+      "expect_no_query": false,
+      "refuse_ok": false,
+      "actual_calls": [
+        {
+          "metric_id": "stickiness",
+          "params": {
+            "end_date": "2026-09-17"
+          },
+          "ok": true
+        }
+      ],
+      "reference_metric_id": "stickiness",
+      "reference_params": {
+        "end_date": "2026-09-17"
+      },
+      "iterations": 3,
+      "usage": {
+        "llm_calls": 3,
+        "prompt_tokens": 7030,
+        "completion_tokens": 303,
+        "total_tokens": 7333,
+        "cached_tokens": 6272
+      },
+      "elapsed_ms": 3322.29,
+      "provider": "deepseek",
+      "model": "deepseek-chat"
+    },
+    {
+      "case_id": "E04",
+      "question": "次留是多少？",
+      "category": "留存",
+      "ok": true,
+      "answer": "**次日留存（D1）为 42.66%。**\n\n数据依据：统计的是 2026-09-10 ~ 2026-09-16 期间新增的用户，共 429 人，其中 183 人在注册后第 2 天仍活跃。\n\n补充说明：这个口径已剔除「注册日 + 1 天超出数据截止日」的用户，所以分母是干净的，不会被人为压低。\n\n如果你想看更长周期的留存（7 日 / 30 日），或者想按渠道、版本拆分看哪批用户留得更好，告诉我一声，我再拉数据。",
+      "error": null,
+      "metric_mapping_ok": true,
+      "params_ok": true,
+      "params_detail": {
+        "day_n": {
+          "expected": 1,
+          "actual": 1,
+          "ok": true
+        }
+      },
+      "number_total": 3,
+      "number_traceable": 3,
+      "unexplained_numbers": [],
+      "expect_no_query": false,
+      "refuse_ok": false,
+      "actual_calls": [
+        {
+          "metric_id": "retention_rate",
+          "params": {
+            "day_n": 1,
+            "cohort_start": "2026-09-10",
+            "cohort_end": "2026-09-16"
+          },
+          "ok": true
+        }
+      ],
+      "reference_metric_id": "retention_rate",
+      "reference_params": {
+        "day_n": 1,
+        "cohort_start": "2026-09-10",
+        "cohort_end": "2026-09-16"
+      },
+      "iterations": 3,
+      "usage": {
+        "llm_calls": 3,
+        "prompt_tokens": 7326,
+        "completion_tokens": 242,
+        "total_tokens": 7568,
+        "cached_tokens": 6528
+      },
+      "elapsed_ms": 3018.53,
+      "provider": "deepseek",
+      "model": "deepseek-chat"
+    },
+    {
+      "case_id": "E05",
+      "question": "七日留存率怎么样？",
+      "category": "留存",
+      "ok": true,
+      "answer": "**结论：最近一批新增用户的 7 日留存率为 20.55%。**\n\n数据依据：以 2026-09-04 ~ 2026-09-10 注册的 433 名新用户为样本，其中 89 人在注册后第 7 天仍活跃，7 日留存率 20.55%。\n\n需要提醒两点：\n1. **样本量偏小**（433 人），留存率会有一定波动，单看这一批不宜下强结论。如果你想看趋势，我可以拉连续几周的 7 日留存对比，判断是稳定还是在下滑。\n2. 这个口径已剔除「注册日 + 7 天超过数据截止日」的用户，所以是干净可比的。\n\n要不要我再看一下**次日留存（D1）**或**分渠道的 7 日留存**？分渠道能帮你判断是整体问题还是某个买量渠道拖后腿——不过渠道对比时我会一并报出各渠道样本量，样本太小的组结论只能参考。\n\n以上建议需人工复核后执行，建议结合买量成本、竞品动态等因素共同判断。",
+      "error": null,
+      "metric_mapping_ok": true,
+      "params_ok": true,
+      "params_detail": {
+        "day_n": {
+          "expected": 7,
+          "actual": 7,
+          "ok": true
+        }
+      },
+      "number_total": 7,
+      "number_traceable": 6,
+      "unexplained_numbers": [
+        "2"
+      ],
+      "expect_no_query": false,
+      "refuse_ok": false,
+      "actual_calls": [
+        {
+          "metric_id": "retention_rate",
+          "params": {
+            "day_n": 7,
+            "cohort_start": "2026-09-04",
+            "cohort_end": "2026-09-10"
+          },
+          "ok": true
+        }
+      ],
+      "reference_metric_id": "retention_rate",
+      "reference_params": {
+        "day_n": 7,
+        "cohort_start": "2026-09-04",
+        "cohort_end": "2026-09-10"
+      },
+      "iterations": 3,
+      "usage": {
+        "llm_calls": 3,
+        "prompt_tokens": 7333,
+        "completion_tokens": 356,
+        "total_tokens": 7689,
+        "cached_tokens": 6528
+      },
+      "elapsed_ms": 3182.23,
+      "provider": "deepseek",
+      "model": "deepseek-chat"
+    },
+    {
+      "case_id": "E06",
+      "question": "D30 留存是多少？",
+      "category": "留存",
+      "ok": true,
+      "answer": "**D30 留存率是 10.71%。**\n\n数据依据：取 2026-08-12 ~ 2026-08-18 这一批新增用户（共 411 人），注册后第 30 天仍活跃的有 44 人，留存率 10.71%。这是系统默认口径下最新一批「观察满 30 天」的用户——再往后的批次因为还没到第 30 天，无法统计。\n\n需要提醒的是，这批样本量只有 411 人，属于偏小的批次，留存率会有一定波动，建议不要只盯单一批次，可以拉长 cohort 区间看整体水平。\n\n如果你想看更早批次（比如 7 月）的 D30 做对比，或者想看 D1 / D7 的走势，告诉我，我再查。",
+      "error": null,
+      "metric_mapping_ok": true,
+      "params_ok": true,
+      "params_detail": {
+        "day_n": {
+          "expected": 30,
+          "actual": 30,
+          "ok": true
+        }
+      },
+      "number_total": 5,
+      "number_traceable": 5,
+      "unexplained_numbers": [],
+      "expect_no_query": false,
+      "refuse_ok": false,
+      "actual_calls": [
+        {
+          "metric_id": "retention_rate",
+          "params": {
+            "day_n": 30,
+            "cohort_start": "2026-08-12",
+            "cohort_end": "2026-08-18"
+          },
+          "ok": true
+        }
+      ],
+      "reference_metric_id": "retention_rate",
+      "reference_params": {
+        "day_n": 30,
+        "cohort_start": "2026-08-12",
+        "cohort_end": "2026-08-18"
+      },
+      "iterations": 3,
+      "usage": {
+        "llm_calls": 3,
+        "prompt_tokens": 7336,
+        "completion_tokens": 291,
+        "total_tokens": 7627,
+        "cached_tokens": 6528
+      },
+      "elapsed_ms": 2692.91,
+      "provider": "deepseek",
+      "model": "deepseek-chat"
+    },
+    {
+      "case_id": "E07",
+      "question": "最近两周每天的新增用户数是多少？",
+      "category": "增长",
+      "ok": true,
+      "answer": "**最近两周（2026-09-04 ~ 09-17）新增用户共 876 人，日均约 63 人。**\n\n分日看：\n- 09-04：57 人\n- 09-05：99 人（两周最高）\n- 09-06：72 人\n- 09-07：54 人\n- 09-08：54 人\n- 09-09：47 人（两周最低）\n- 09-10：50 人\n- 09-11：57 人\n- 09-12：73 人\n- 09-13：76 人\n- 09-14：64 人\n- 09-15：58 人\n- 09-16：51 人\n- 09-17：64 人\n\n**几个观察：**\n1. 整体在 47~99 人之间波动，没有明显上升或下降趋势，属于比较平稳的拉新节奏。\n2. 周末效应明显：09-05（周六）99 人、09-12（周六）73 人、09-13（周日）76 人，都是当周高点；工作日多在 50~60 人区间。\n3. 09-09 的 47 人是两周低点，之后逐步回升。\n\n需要我进一步拆一下这些新增用户来自哪些渠道，或者看看他们的留存质量吗？",
+      "error": null,
+      "metric_mapping_ok": true,
+      "params_ok": true,
+      "params_detail": {
+        "start_date": {
+          "expected": "2026-09-04",
+          "actual": "2026-09-04",
+          "ok": true
+        },
+        "end_date": {
+          "expected": "2026-09-17",
+          "actual": "2026-09-17",
+          "ok": true
+        }
+      },
+      "number_total": 27,
+      "number_traceable": 27,
+      "unexplained_numbers": [],
+      "expect_no_query": false,
+      "refuse_ok": false,
+      "actual_calls": [
+        {
+          "metric_id": "new_user_count",
+          "params": {
+            "start_date": "2026-09-04",
+            "end_date": "2026-09-17"
+          },
+          "ok": true
+        }
+      ],
+      "reference_metric_id": "new_user_count",
+      "reference_params": {
+        "start_date": "2026-09-04",
+        "end_date": "2026-09-17"
+      },
+      "iterations": 3,
+      "usage": {
+        "llm_calls": 3,
+        "prompt_tokens": 7206,
+        "completion_tokens": 439,
+        "total_tokens": 7645,
+        "cached_tokens": 6400
+      },
+      "elapsed_ms": 3772.75,
+      "provider": "deepseek",
+      "model": "deepseek-chat"
+    },
+    {
+      "case_id": "E08",
+      "question": "最近 14 天的日活情况如何？",
+      "category": "增长",
+      "ok": true,
+      "answer": "**结论：最近 14 天日活整体在 455~655 人区间波动，没有明显增长或下滑趋势，属于平稳状态。**\n\n数据依据（2026-09-04 ~ 2026-09-17）：\n- 区间最高 655 人（09-05，周六），最低 455 人（09-04，周五）\n- 最近 7 天（09-11 ~ 09-17）日活在 465~544 人之间，日均约 526 人\n- 前 7 天（09-04 ~ 09-10）日均约 528 人，两段基本持平\n\n几个观察：\n1. **周末有小高峰**：09-05（周六）冲到 655 人，是 14 天里的峰值；09-13（周日）也有 544 人。工作日普遍在 500 人上下。\n2. **09-04 的 455 人是低点**，之后一路回升到周末峰值，再回落到 500 附近震荡。\n3. 整体看，日活没有持续上升或下降的势头，最近一周基本横盘。\n\n需要我进一步看什么？比如：\n- 同期**新增用户数**，判断日活是靠拉新还是靠老用户撑着\n- **DAU/MAU 粘性**，看活跃集中度\n- 或者你更关心某个具体日期波动的原因\n\n告诉我方向，我接着查。",
+      "error": null,
+      "metric_mapping_ok": true,
+      "params_ok": true,
+      "params_detail": {
+        "start_date": {
+          "expected": "2026-09-04",
+          "actual": "2026-09-04",
+          "ok": true
+        },
+        "end_date": {
+          "expected": "2026-09-17",
+          "actual": "2026-09-17",
+          "ok": true
+        }
+      },
+      "number_total": 16,
+      "number_traceable": 16,
+      "unexplained_numbers": [],
+      "expect_no_query": false,
+      "refuse_ok": false,
+      "actual_calls": [
+        {
+          "metric_id": "dau",
+          "params": {
+            "start_date": "2026-09-04",
+            "end_date": "2026-09-17"
+          },
+          "ok": true
+        }
+      ],
+      "reference_metric_id": "dau",
+      "reference_params": {
+        "start_date": "2026-09-04",
+        "end_date": "2026-09-17"
+      },
+      "iterations": 3,
+      "usage": {
+        "llm_calls": 3,
+        "prompt_tokens": 7260,
+        "completion_tokens": 446,
+        "total_tokens": 7706,
+        "cached_tokens": 6400
+      },
+      "elapsed_ms": 3747.88,
+      "provider": "deepseek",
+      "model": "deepseek-chat"
+    },
+    {
+      "case_id": "E09",
+      "question": "最近的付费率是多少？",
+      "category": "商业化",
+      "ok": true,
+      "answer": "**最近 7 天（2026-09-11 ~ 2026-09-17）付费转化率为 3.70%。**\n\n数据依据：区间内活跃用户 2,489 人，其中付费用户 92 人，付费率 = 92 ÷ 2,489 = 3.70%。\n\n口径说明：这里的分母是「当期活跃用户」，不是全部注册用户，所以反映的是当期活跃人群的付费渗透情况，不会被历史存量用户稀释。\n\n需要提醒的是，这 7 天的活跃用户基数只有 2,489 人，样本量不算大，单周付费率容易受个别大额付费用户或活动节奏影响。如果你想看更稳的趋势，我可以帮你拉一段更长时间（比如近 30 天）的付费率走势，或者拆开看 ARPU / ARPPU 的变化——你更关心哪个方向？",
+      "error": null,
+      "metric_mapping_ok": true,
+      "params_ok": null,
+      "params_detail": {},
+      "number_total": 7,
+      "number_traceable": 7,
+      "unexplained_numbers": [],
+      "expect_no_query": false,
+      "refuse_ok": false,
+      "actual_calls": [
+        {
+          "metric_id": "payment_rate",
+          "params": {
+            "start_date": "2026-09-11",
+            "end_date": "2026-09-17"
+          },
+          "ok": true
+        }
+      ],
+      "reference_metric_id": "payment_rate",
+      "reference_params": {
+        "start_date": "2026-09-11",
+        "end_date": "2026-09-17"
+      },
+      "iterations": 3,
+      "usage": {
+        "llm_calls": 3,
+        "prompt_tokens": 7075,
+        "completion_tokens": 294,
+        "total_tokens": 7369,
+        "cached_tokens": 6400
+      },
+      "elapsed_ms": 3544.26,
+      "provider": "deepseek",
+      "model": "deepseek-chat"
+    },
+    {
+      "case_id": "E10",
+      "question": "ARPU 现在是多少？",
+      "category": "商业化",
+      "ok": true,
+      "answer": "**最近 7 天（2026-09-11 ~ 2026-09-17）ARPU 为 8.46 元。**\n\n依据：该区间总流水 21,068 元，活跃用户数 2,489 人，两者相除得到人均 8.46 元。\n\n提醒一下口径：ARPU 的分母是**全体活跃用户**，不是付费用户。如果你想看「付费用户人均花了多少」，那是 ARPPU，通常数值会高不少——需要的话我可以一并拉出来对比。\n\n另外，单看一个绝对值意义有限。要不要我拉一下前 7 天（09-04 ~ 09-10）的 ARPU 做个对比，看是涨了还是跌了？",
+      "error": null,
+      "metric_mapping_ok": true,
+      "params_ok": null,
+      "params_detail": {},
+      "number_total": 4,
+      "number_traceable": 4,
+      "unexplained_numbers": [],
+      "expect_no_query": false,
+      "refuse_ok": false,
+      "actual_calls": [
+        {
+          "metric_id": "arpu",
+          "params": {
+            "start_date": "2026-09-11",
+            "end_date": "2026-09-17"
+          },
+          "ok": true
+        }
+      ],
+      "reference_metric_id": "arpu",
+      "reference_params": {
+        "start_date": "2026-09-11",
+        "end_date": "2026-09-17"
+      },
+      "iterations": 3,
+      "usage": {
+        "llm_calls": 3,
+        "prompt_tokens": 7177,
+        "completion_tokens": 265,
+        "total_tokens": 7442,
+        "cached_tokens": 6400
+      },
+      "elapsed_ms": 2554.01,
+      "provider": "deepseek",
+      "model": "deepseek-chat"
+    },
+    {
+      "case_id": "E11",
+      "question": "付费用户的人均付费是多少？",
+      "category": "商业化",
+      "ok": true,
+      "answer": "**最近 7 天（2026-09-11 ~ 2026-09-17）付费用户人均付费（ARPPU）为 229.00 元。**\n\n数据依据：这 7 天总流水 21,068.00 元，付费用户 92 人，两者相除得到 ARPPU 229.00 元。也就是说，愿意付费的玩家平均每人花了 229 元，这个数字可以直接作为礼包定价和档位设计的参考基准。\n\n需要提醒的是，付费用户样本只有 92 人，属于偏小的样本量，单周 ARPPU 容易受个别大额付费玩家影响而波动，建议看趋势而不是只看单周绝对值。\n\n如果你想进一步判断，我可以帮你查：\n- **付费转化率**：看有多少活跃用户愿意掏钱（ARPPU 高但付费率低，说明只靠少数大R支撑）\n- **ARPU**：看全体活跃用户的人均贡献\n- **拉长到 30 天看 ARPPU 走势**：判断 229 元是常态还是本周偶发\n\n你更关心哪个方向？",
+      "error": null,
+      "metric_mapping_ok": true,
+      "params_ok": null,
+      "params_detail": {},
+      "number_total": 7,
+      "number_traceable": 7,
+      "unexplained_numbers": [],
+      "expect_no_query": false,
+      "refuse_ok": false,
+      "actual_calls": [
+        {
+          "metric_id": "arppu",
+          "params": {
+            "start_date": "2026-09-11",
+            "end_date": "2026-09-17"
+          },
+          "ok": true
+        }
+      ],
+      "reference_metric_id": "arppu",
+      "reference_params": {
+        "start_date": "2026-09-11",
+        "end_date": "2026-09-17"
+      },
+      "iterations": 3,
+      "usage": {
+        "llm_calls": 3,
+        "prompt_tokens": 7074,
+        "completion_tokens": 351,
+        "total_tokens": 7425,
+        "cached_tokens": 6400
+      },
+      "elapsed_ms": 3999.97,
+      "provider": "deepseek",
+      "model": "deepseek-chat"
+    },
+    {
+      "case_id": "E12",
+      "question": "新用户 30 天的 LTV 是多少？",
+      "category": "商业化",
+      "ok": true,
+      "answer": "**新用户 30 天 LTV 为 17.46 元。**\n\n数据依据：取 2026-07-20 ~ 2026-08-18 期间新增的 1654 名用户，在注册后 30 天观察窗口内的累计付费共 28882 元，人均 17.46 元。这是标准的 LTV_30 口径（窗口内累计付费 ÷ 该批新增用户数），不做折现和生命周期外推。\n\n两点提醒：\n- 这个批次特意选在 8 月 18 日截止，是为了保证每个用户都能被完整观察满 30 天，否则观察期不足会低估 LTV。\n- LTV 单独看意义有限，要和获客成本（CAC）配对才有决策价值。行业通常以 LTV/CAC > 3 作为买量健康线，如果你能提供各渠道的获客成本，我可以帮你算一下当前投放是否划算。\n\n需要我按渠道或版本拆一下 LTV，看看哪类用户价值更高吗？\n\n以上建议需人工复核后执行，建议结合买量成本、竞品动态等因素共同判断。",
+      "error": null,
+      "metric_mapping_ok": true,
+      "params_ok": true,
+      "params_detail": {
+        "window_days": {
+          "expected": 30,
+          "actual": 30,
+          "ok": true
+        }
+      },
+      "number_total": 6,
+      "number_traceable": 5,
+      "unexplained_numbers": [
+        "3"
+      ],
+      "expect_no_query": false,
+      "refuse_ok": false,
+      "actual_calls": [
+        {
+          "metric_id": "ltv",
+          "params": {
+            "window_days": 30,
+            "cohort_start": "2026-07-20",
+            "cohort_end": "2026-08-18"
+          },
+          "ok": true
+        }
+      ],
+      "reference_metric_id": "ltv",
+      "reference_params": {
+        "window_days": 30,
+        "cohort_start": "2026-07-20",
+        "cohort_end": "2026-08-18"
+      },
+      "iterations": 3,
+      "usage": {
+        "llm_calls": 3,
+        "prompt_tokens": 7321,
+        "completion_tokens": 358,
+        "total_tokens": 7679,
+        "cached_tokens": 6528
+      },
+      "elapsed_ms": 3407.96,
+      "provider": "deepseek",
+      "model": "deepseek-chat"
+    },
+    {
+      "case_id": "E13",
+      "question": "新手引导的漏斗转化情况怎么样？",
+      "category": "留存",
+      "ok": true,
+      "answer": "**结论：新手引导最大的流失点在「步骤2→步骤3」，近 7 天整体完成率只有 44.24%，也就是说超过一半的新用户没走完引导。**\n\n数据依据（2026-09-11 ~ 2026-09-17 新增用户，共 443 人）：\n- 注册 → 步骤1：95.94%（425 人），基本没流失，入口没问题\n- 步骤1 → 步骤2：78.59%（334 人），掉了约 91 人\n- 步骤2 → 步骤3：58.68%（196 人），掉了 138 人，**这是最大瓶颈**\n- 整体完成率：44.24%\n\n**建议**：优先排查步骤2到步骤3之间的体验，比如是否有强制教学关卡、操作复杂度陡增、加载卡顿或引导提示不清。步骤1→步骤2 的 21% 流失也值得看一眼，但优先级低于步骤3。\n\n需要的话我可以按渠道拆开看，确认是某个买量渠道的用户特别容易卡在步骤3，还是全渠道普遍现象。\n\n以上建议需人工复核后执行，建议结合买量成本、竞品动态等因素共同判断。",
+      "error": null,
+      "metric_mapping_ok": true,
+      "params_ok": null,
+      "params_detail": {},
+      "number_total": 12,
+      "number_traceable": 12,
+      "unexplained_numbers": [],
+      "expect_no_query": false,
+      "refuse_ok": false,
+      "actual_calls": [
+        {
+          "metric_id": "tutorial_funnel",
+          "params": {
+            "start_date": "2026-09-11",
+            "end_date": "2026-09-17"
+          },
+          "ok": true
+        }
+      ],
+      "reference_metric_id": "tutorial_funnel",
+      "reference_params": {
+        "start_date": "2026-09-11",
+        "end_date": "2026-09-17"
+      },
+      "iterations": 3,
+      "usage": {
+        "llm_calls": 3,
+        "prompt_tokens": 7442,
+        "completion_tokens": 367,
+        "total_tokens": 7809,
+        "cached_tokens": 6528
+      },
+      "elapsed_ms": 3511.45,
+      "provider": "deepseek",
+      "model": "deepseek-chat"
+    },
+    {
+      "case_id": "E14",
+      "question": "各渠道的次日留存对比如何？",
+      "category": "渠道",
+      "ok": true,
+      "answer": "**结论：渠道质量分层明显，老玩家邀请和自然量最留得住，抖音买量垫底。**\n\n数据依据（统计口径：2026-08-18 ~ 2026-09-16 新增用户，次日留存）：\n\n| 渠道 | 新增用户数 | 次日留存 |\n|---|---|---|\n| 老玩家邀请 | 149 | 55.70% |\n| 自然量 | 405 | 48.15% |\n| KOL主播导量 | 227 | 41.41% |\n| 腾讯广告 | 323 | 40.25% |\n| 应用商店推荐 | 273 | 39.56% |\n| 抖音买量 | 418 | 35.89% |\n\n**解读：**\n- 老玩家邀请（55.70%）和自然量（48.15%）明显领先，比抖音买量高出约 12~20 个百分点，说明社交关系链和主动搜索来的用户质量最好。\n- 三个买量/导量渠道（KOL、腾讯广告、抖音）集中在 36%~41%，其中抖音买量量最大（418 人）但留存最低，是典型的「量大质弱」。\n- 老玩家邀请样本量只有 149 人，相对偏小，留存率波动会大一些，结论仅供参考。\n\n**建议：** 如果抖音买量的获客成本没有明显低于其他渠道，它的性价比是存疑的；老玩家邀请虽然量小但质量最高，值得考虑加激励把量做起来。要判断真实 ROI，还需要把各渠道的获客成本拉进来一起算。\n\n以上建议需人工复核后执行，建议结合买量成本、竞品动态等因素共同判断。",
+      "error": null,
+      "metric_mapping_ok": true,
+      "params_ok": true,
+      "params_detail": {
+        "day_n": {
+          "expected": 1,
+          "actual": 1,
+          "ok": true
+        }
+      },
+      "number_total": 19,
+      "number_traceable": 19,
+      "unexplained_numbers": [],
+      "expect_no_query": false,
+      "refuse_ok": false,
+      "actual_calls": [
+        {
+          "metric_id": "channel_retention",
+          "params": {
+            "day_n": 1,
+            "cohort_start": "2026-08-18",
+            "cohort_end": "2026-09-16"
+          },
+          "ok": true
+        }
+      ],
+      "reference_metric_id": "channel_retention",
+      "reference_params": {
+        "day_n": 1,
+        "cohort_start": "2026-08-18",
+        "cohort_end": "2026-09-16"
+      },
+      "iterations": 3,
+      "usage": {
+        "llm_calls": 3,
+        "prompt_tokens": 7390,
+        "completion_tokens": 479,
+        "total_tokens": 7869,
+        "cached_tokens": 6528
+      },
+      "elapsed_ms": 3570.98,
+      "provider": "deepseek",
+      "model": "deepseek-chat"
+    },
+    {
+      "case_id": "E15",
+      "question": "v2.0.0 上线后新用户留存变好了吗？",
+      "category": "版本",
+      "ok": true,
+      "answer": "**结论：v2.0.0 上线后新用户留存确实变好了，次日和 7 日留存都有提升。**\n\n数据依据（新用户留存率对比）：\n\n| 批次 | 样本量 | 次日留存 | 7日留存 |\n|---|---|---|---|\n| 版本上线后 | 755 | 46.36% | 21.54% |\n| 上线前两周 | 799 | 40.30% | 17.15% |\n| 更早（前15~28天） | 835 | 36.53% | 15.45% |\n\n- 次日留存：上线后 46.36%，比上线前两周高 6.06 个百分点，比更早批次高 9.83 个百分点。\n- 7日留存：上线后 21.54%，比上线前两周高 4.39 个百分点，比更早批次高 6.09 个百分点。\n\n三个批次样本量都在 750~835 之间，量级相当，对比结果比较可信。而且从「更早 → 上线前两周 → 上线后」呈现逐档上升的趋势，不像是单点波动。\n\n**两点提醒：**\n1. 7日留存那行「版本上线后」样本量只有 376，是因为上线后新增用户还没跑满 7 天观察期，属于正常现象，但意味着这个 21.54% 后续可能还会小幅变动。\n2. 留存变好不能直接等同于「版本改动导致的」——期间如果有节假日、买量渠道结构变化，也会影响留存。建议结合渠道留存数据交叉看一下。\n\n以上建议需人工复核后执行，建议结合买量成本、竞品动态等因素共同判断。",
+      "error": null,
+      "metric_mapping_ok": true,
+      "params_ok": true,
+      "params_detail": {
+        "version_id": {
+          "expected": "v2.0.0",
+          "actual": "v2.0.0",
+          "ok": true
+        },
+        "day_n": {
+          "expected": 1,
+          "actual": 1,
+          "ok": true
+        }
+      },
+      "number_total": 18,
+      "number_traceable": 17,
+      "unexplained_numbers": [
+        "376"
+      ],
+      "expect_no_query": false,
+      "refuse_ok": false,
+      "actual_calls": [
+        {
+          "metric_id": "version_retention",
+          "params": {
+            "version_id": "v2.0.0",
+            "day_n": 1,
+            "before_days": 14,
+            "history_days": 28,
+            "cohort_end": "2026-09-17"
+          },
+          "ok": true
+        },
+        {
+          "metric_id": "version_retention",
+          "params": {
+            "version_id": "v2.0.0",
+            "day_n": 7,
+            "before_days": 14,
+            "history_days": 28,
+            "cohort_end": "2026-09-17"
+          },
+          "ok": true
+        }
+      ],
+      "reference_metric_id": "version_retention",
+      "reference_params": {
+        "version_id": "v2.0.0",
+        "day_n": 1,
+        "before_days": 14,
+        "history_days": 28,
+        "cohort_end": "2026-09-17"
+      },
+      "iterations": 3,
+      "usage": {
+        "llm_calls": 3,
+        "prompt_tokens": 7808,
+        "completion_tokens": 557,
+        "total_tokens": 8365,
+        "cached_tokens": 6656
+      },
+      "elapsed_ms": 4090.21,
+      "provider": "deepseek",
+      "model": "deepseek-chat"
+    },
+    {
+      "case_id": "E16",
+      "question": "v1.9.0 版本的留存对比情况如何？",
+      "category": "版本",
+      "ok": true,
+      "answer": "**结论：v1.9.0 上线后，新用户次日留存小幅提升，但 7 日留存反而略降，整体看不出明确的版本增益。**\n\n数据依据（以 v1.9.0 上线日为分界）：\n\n| 批次 | 样本量 | 次日留存 | 7日留存 |\n|---|---|---|---|\n| 版本上线后 | 3695 | 39.40% | 16.31% |\n| 上线前两周 | 697 | 36.44% | 18.51% |\n| 更早（前15~28天） | 544 | 41.18% | 15.07% |\n\n次日留存：上线后 39.40%，比上线前两周高约 3 个百分点，但低于「更早」批次的 41.18%——说明这个提升更像是从低谷回升，而不是突破。\n\n7 日留存：上线后 16.31%，比上线前两周低 2.2 个百分点，仅略高于更早批次。短期拉新有改善，但用户没留下来，长期价值没变好。\n\n**两点必须提醒：**\n1. 上线前两周和更早批次样本量只有 697 和 544，上线后是 3695，对比组样本偏小，留存率波动会比较大，结论仅供参考。\n2. 留存变化不能直接归因于版本。这段时间的节假日、买量渠道结构变化都可能影响结果，需要交叉验证才能确认。\n\n建议下一步看新手引导漏斗，确认版本改动是否真的作用在引导环节。以上建议需人工复核后执行，建议结合买量成本、竞品动态等因素共同判断。",
+      "error": null,
+      "metric_mapping_ok": true,
+      "params_ok": true,
+      "params_detail": {
+        "version_id": {
+          "expected": "v1.9.0",
+          "actual": "v1.9.0",
+          "ok": true
+        }
+      },
+      "number_total": 18,
+      "number_traceable": 16,
+      "unexplained_numbers": [
+        "18.51",
+        "2"
+      ],
+      "expect_no_query": false,
+      "refuse_ok": false,
+      "actual_calls": [
+        {
+          "metric_id": "version_retention",
+          "params": {
+            "version_id": "v1.9.0",
+            "day_n": 1,
+            "before_days": 14,
+            "history_days": 28,
+            "cohort_end": "2026-09-17"
+          },
+          "ok": true
+        },
+        {
+          "metric_id": "version_retention",
+          "params": {
+            "version_id": "v1.9.0",
+            "day_n": 7,
+            "before_days": 14,
+            "history_days": 28,
+            "cohort_end": "2026-09-17"
+          },
+          "ok": true
+        }
+      ],
+      "reference_metric_id": "version_retention",
+      "reference_params": {
+        "version_id": "v1.9.0",
+        "day_n": 1,
+        "before_days": 14,
+        "history_days": 28,
+        "cohort_end": "2026-09-17"
+      },
+      "iterations": 3,
+      "usage": {
+        "llm_calls": 3,
+        "prompt_tokens": 7804,
+        "completion_tokens": 547,
+        "total_tokens": 8351,
+        "cached_tokens": 6656
+      },
+      "elapsed_ms": 4051.57,
+      "provider": "deepseek",
+      "model": "deepseek-chat"
+    },
+    {
+      "case_id": "E17",
+      "question": "去年 12 月的日活是多少？",
+      "category": "边界",
+      "ok": true,
+      "answer": "我的数据只覆盖 **2026-06-20 ~ 2026-09-17**（共 90 天），去年 12 月（2025-12）超出了这个范围，暂时查不了。\n\n如果你想看活跃趋势，我可以给你：\n- 最近 7 天（2026-09-11 ~ 2026-09-17）的日活走势\n- 整个可用窗口（6/20 ~ 9/17）的日活变化，看长期趋势\n\n需要哪个？或者你关心的是别的指标（留存、新增、付费），也可以直接说。",
+      "error": null,
+      "metric_mapping_ok": null,
+      "params_ok": null,
+      "params_detail": {},
+      "number_total": 0,
+      "number_traceable": 0,
+      "unexplained_numbers": [],
+      "expect_no_query": true,
+      "refuse_ok": true,
+      "actual_calls": [],
+      "reference_metric_id": null,
+      "reference_params": {},
+      "iterations": 1,
+      "usage": {
+        "llm_calls": 1,
+        "prompt_tokens": 2090,
+        "completion_tokens": 126,
+        "total_tokens": 2216,
+        "cached_tokens": 1920
+      },
+      "elapsed_ms": 1038.98,
+      "provider": "deepseek",
+      "model": "deepseek-chat"
+    },
+    {
+      "case_id": "E18",
+      "question": "帮我预测一下下个月的新增用户数。",
+      "category": "边界",
+      "ok": true,
+      "answer": "预测未来数据不在我的能力范围内——我的数据只覆盖 2026-06-20 ~ 2026-09-17，而且工具只提供历史真实数据，没有预测功能。\n\n不过我可以帮你做两件替代的事：\n\n1. **看历史趋势**：拉出最近 90 天的新增用户走势，告诉你近期是在涨还是在跌、大致什么量级，你可以据此自己判断下个月的可能区间（但这只是趋势描述，不是预测结论）。\n2. **看近期实际值**：比如最近 7 天（2026-09-11 ~ 2026-09-17）或最近 30 天的日均新增，作为参考基线。\n\n需要我拉哪一段？或者你告诉我更关心「整体趋势」还是「最近的具体量级」，我直接查给你。",
+      "error": null,
+      "metric_mapping_ok": null,
+      "params_ok": null,
+      "params_detail": {},
+      "number_total": 0,
+      "number_traceable": 0,
+      "unexplained_numbers": [],
+      "expect_no_query": true,
+      "refuse_ok": true,
+      "actual_calls": [],
+      "reference_metric_id": null,
+      "reference_params": {},
+      "iterations": 1,
+      "usage": {
+        "llm_calls": 1,
+        "prompt_tokens": 2091,
+        "completion_tokens": 170,
+        "total_tokens": 2261,
+        "cached_tokens": 1920
+      },
+      "elapsed_ms": 1400.78,
+      "provider": "deepseek",
+      "model": "deepseek-chat"
+    }
+  ]
+}

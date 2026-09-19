@@ -57,7 +57,6 @@ Agent 主循环（Phase 3）—— 手搓 ReAct
 
 from __future__ import annotations
 
-import re
 import time
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
@@ -67,6 +66,8 @@ from src.agent.llm_client import LLMClient
 from src.agent.prompts import build_system_prompt
 from src.agent.tools import ToolExecutor
 from src.exceptions import GameAgentError, LLMNotConfiguredError
+from src.grounding import check_answer_numbers, collect_ground_truth_params, collect_ground_truth_values
+from src.grounding import grounding_decision, unexplained_ratio
 from src.metrics.registry import MetricRegistry, get_registry
 
 if TYPE_CHECKING:
@@ -97,40 +98,47 @@ _NOT_CONFIGURED_HINT = (
 #   直接答「最近 7 天的日活是 100,000 人」—— 而且同一问题两次复现。
 #   「禁止编造」当时只是提示词里的一句软约束，程序层没有任何机制能拦住它。
 #
-# 【这一层怎么工作？】
+# 【这一层怎么工作？（Phase 9 起升级为「逐数字溯源」）】
 #
-#   触发条件必须同时满足两条（缺一不可）：
-#     ① 本轮对话中**没有任何一次成功的 query_metric**；
-#     ② 最终回答里出现了「数据型数字」。
-#   命中则判定为「疑似编造」，向上下文追加一条提醒、强制模型重新取数；
-#   补救仍失败就不把那些数字给用户看（宁可说查不到，也不能编）。
+#   旧判据（Phase 6）只问两个粗糙的问题：
+#     ① 本轮有没有**成功取过数**？ ② 回答里有没有「数据型数字」？
+#   只要有一次成功取数就整条放行 —— 于是「查了 1 次 DAU、又在答案里编了
+#   5 个留存率」这种情况能大摇大摆过去。防线存在，但拦不住「混着编造」。
 #
-# 【为什么要绕开「日期」和「版本号」？】
+#   新判据把回答里**每一个数字**反向映射到本次查询的结果集：
+#       pass     —— 没有数字，或每个数字都能在结果集里找到出处
+#       annotate —— 少量数字找不到出处（占比 ≤ 1/3）：回答照给，末尾加提示
+#       block    —— 找不到出处的占比 > 1/3：判定疑似编造，不把数字给用户看
 #
-#   这是这一层最容易写错的地方。拒答场景的回答天然含数字：
+#   判定用的原语（抽数字 / 比数字 / 收参考值）来自 src/grounding.py ——
+#   与评测体系共用同一套口径。共用而不是另写一套，是为了避免出现
+#   「运行时拦了、评测说没问题」这种自相矛盾的结论。
+#
+# 【为什么分级，而不是「一个数字对不上就拦」？】
+#   因为「对不上」不完全等于编造。口语化的「稳定在 530 左右」（实际 533）、
+#   以及推导池没覆盖到的表达（加权、中位数）都会被归到「找不到出处」。
+#   一律拦截会把一整段正确推理因为一个近似值废掉 —— 过度拦截的代价是
+#   用户再也不信这个提示。而一条回答里超过三分之一的数字都无出处，
+#   就不是「表达方式的差异」能解释的了。
+#
+# 【向后兼容】一次成功取数都没有时，参考集为空 → 所有数字都无出处 →
+#   占比 1.0 → 走 block，与旧判据「无取数 + 有数字 → 拦截」完全一致。
+#   新判据是旧判据的**严格超集**：旧逻辑能拦的它都拦，
+#   旧逻辑放过的「有查询但混着编造数字」它也能拦。
+#
+# 【为什么要绕开「日期」「版本号」「窗口量词」？】
+#   拒答场景的回答天然含数字：
 #   「我的数据只覆盖 2026-06-20 ~ 2026-09-17（共 90 天）」——
 #   如果按「含数字」一刀切，这条正确的拒答会被误判成编造，
-#   反而把 100% 的超范围拒答率打坏。
-#   所以先把日期、版本号从文本里剔掉，只看剩下的「数据值」形态：
-#   百分比、千分位数字、3 位以上连续数字。
-#   （「7 天」「30 天」这类窗口表述只有 1~2 位，天然不会误伤。）
+#   反而把 100% 的超范围拒答率打坏。这些剔除规则集中在
+#   src/grounding.py 的 extract_numbers 里（每一条都对应一次真实误报）。
 #
 # 【这一点怎么讲清楚？】
 #   「软约束 + 硬校验」是 LLM 应用里反复出现的一对。提示词负责让模型
 #   大概率做对，程序校验负责在它做错时兜住。只靠提示词，换一个弱一点的
 #   模型就会失守；只靠校验，会频繁打断正常的推理。两者缺一不可 ——
 #   这也是我做多供应商降级时才发现的问题：降级链路通了，
-#   但备用模型的指令遵循能力下降，把提示词的软约束击穿了。」
-_DATE_LIKE = re.compile(
-    r"\d{4}\s*-\s*\d{1,2}(\s*-\s*\d{1,2})?"            # 2026-06-20 / 2026-06
-    r"|\d{4}\s*年\s*(\d{1,2}\s*月\s*)?(\d{1,2}\s*日)?"  # 2026 年 6 月 20 日
-)
-_VERSION_LIKE = re.compile(r"[vV]\d+(\.\d+)+|\d+(\.\d+){2,}")  # v2.0.0 / 2.0.0
-# ↑ 这里必须要求「带 v 前缀」或「至少两个点」，不能写成 [vV]?\d+(\.\d+)+。
-#   后者会把 45.00 这种**小数**也当成版本号剔掉，而小数正是最需要抓的数据值形态
-#   （留存率 42.66%、付费率 3.85% 全是小数）—— 那等于把防线的主要目标放走了。
-# 剔除日期与版本号之后，这些形态才算「数据值」
-_DATA_NUMBER = re.compile(r"\d+(\.\d+)?\s*%|\d{1,3}(,\d{3})+|\d{3,}")
+#   但备用模型的指令遵循能力下降，把提示词的软约束击穿了。
 
 _GUARD_REMINDER = (
     "【系统校验未通过】你刚才的回答里出现了具体数值，但本轮对话中"
@@ -146,18 +154,15 @@ _GUARD_BLOCKED_ANSWER = (
     "请把问题问得更具体一些（例如「最近 7 天的日活是多少」），或稍后重试。"
 )
 
-
-def _has_ungrounded_number(text: str) -> bool:
-    """判断一段回答里是否存在「疑似编造的数据值」。
-
-    实现就是上面说的三步：剔日期 → 剔版本号 → 找数据值形态。
-    故意写得保守（宁可漏判也不错判）：漏判只是少拦一次，错判却会
-    把「正确的拒答」变成「拦截」，破坏产品的诚实性。
-    """
-    if not text:
-        return False
-    cleaned = _VERSION_LIKE.sub("", _DATE_LIKE.sub("", text))
-    return bool(_DATA_NUMBER.search(cleaned))
+# 分级处置的中间档：存疑数字不多，回答照给，但在末尾如实标注。
+# 为什么是「加一行提示」而不是「把那些数字从正文里抹掉」？
+#   ① 抹数字会破坏 Markdown 表格和句子结构，读起来更糟；
+#   ② 用户有权知道「哪几个数没出处」，而不是被悄悄改过的答案。
+# 文案里列出具体数字，是为了让用户能自己去核对 —— 可解释性要落到可验证上。
+_GROUNDING_ANNOTATION = (
+    "\n\n> 注：以上回答中的 {count} 个数字（{numbers}）未能在本次查询结果中"
+    "找到出处，请谨慎采信；如需确认，我可以重新取数并给出明细。"
+)
 
 
 @dataclass
@@ -218,6 +223,12 @@ class AgentAnswer:
     usage: dict[str, int] = field(default_factory=dict)
     elapsed_ms: float = 0.0
     error: str | None = None
+    # 第五层防线的判定结果（Phase 9）。为 None 表示这次回答没有经过溯源判定
+    # （比如 LLM 未配置、熔断等提前返回的路径）。
+    # 为什么要把判定结果随答案一起返回，而不是只写进 steps？
+    #   因为前端要能一眼看出「这条答案是原样给的、还是被标注过」，评测台也要
+    #   能直接统计「有多少条走了 annotate」—— 藏在自然语言里没法程序化读取。
+    grounding: dict[str, Any] | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -231,6 +242,7 @@ class AgentAnswer:
             "usage": self.usage,
             "elapsed_ms": round(self.elapsed_ms, 2),
             "error": self.error,
+            "grounding": self.grounding,
         }
 
 
@@ -349,14 +361,29 @@ class GameDataAgent:
 
                 # ---------- ④ 收敛：没有工具调用 = 模型给出最终答案 ----------
                 if not response.has_tool_calls:
-                    # ---------- ⑤ 第五层防线：答案来源校验 ----------
-                    # 只有「一次都没成功取到数」+「答案里有数据型数字」同时成立，
-                    # 才判定为疑似编造。单独任一条都不够：
-                    #   · 只看到「没取数」就拦 → 会把正常的拒答、寒暄也拦下来；
-                    #   · 只看到「有数字」就拦 → 拒答文案里天然带日期（2026-06-20）。
-                    ungrounded = grounded_calls == 0 and _has_ungrounded_number(
-                        response.content
+                    # ---------- ⑤ 第五层防线：逐数字溯源 ----------
+                    # 把回答里的每个数字拿去「本次会话真正取到过的数值」里找出处。
+                    # 参考集有两部分，缺一不可：
+                    #   · 结果集里的数值 —— 模型引用的原始数据；
+                    #   · 查询用到的数值型参数 —— 「最近 7 天」的 7 来自参数而非结果集，
+                    #     不把它算作有出处，会制造大量假警报。
+                    # 注意 grounded_calls 不再直接决定拦截与否（旧判据的漏洞就在这），
+                    # 它只作为诊断信息留在 trace 里，用来区分「压根没查」和「查了但混编」。
+                    number_check = check_answer_numbers(
+                        response.content,
+                        collect_ground_truth_values(steps),
+                        extra_allowed=collect_ground_truth_params(steps),
                     )
+                    decision = grounding_decision(number_check)
+                    ungrounded = decision == "block"
+                    grounding = {
+                        "decision": decision,
+                        "total": number_check.total,
+                        "traceable": number_check.matched_count,
+                        "unexplained": [item.raw for item in number_check.unexplained],
+                        "unexplained_ratio": round(unexplained_ratio(number_check), 4),
+                        "grounded_calls": grounded_calls,
+                    }
                     if ungrounded and guard_used < self.guard_retries:
                         guard_used += 1
                         # 把这次拦截记进 trace：前端能展示「模型编了 → 系统拦了 →
@@ -367,6 +394,7 @@ class GameDataAgent:
                                 kind="guard",
                                 content=response.content,
                                 observation=_GUARD_REMINDER,
+                                result=grounding,
                             )
                         )
                         # 用 user 角色追加提醒（而不是 system）：
@@ -397,10 +425,29 @@ class GameDataAgent:
                             usage=usage,
                             elapsed_ms=(time.perf_counter() - start) * 1000,
                             error="回答中出现无法溯源的数值（疑似编造），已被来源校验拦截",
+                            grounding=grounding,
+                        )
+
+                    answer_text = response.content or "（模型没有返回内容）"
+                    if decision == "annotate":
+                        # 少量存疑：回答照给，但在末尾如实标注哪几个数字没出处。
+                        # 只标注、不改正文 —— 抹掉数字会破坏 Markdown 表格，
+                        # 而且用户有权知道被质疑的是哪几个数。
+                        answer_text += _GROUNDING_ANNOTATION.format(
+                            count=len(number_check.unexplained),
+                            numbers=number_check.describe_unexplained(),
+                        )
+                        steps.append(
+                            AgentStep(
+                                iteration=iteration,
+                                kind="grounding",
+                                observation=answer_text,
+                                result=grounding,
+                            )
                         )
                     return AgentAnswer(
                         question=question,
-                        answer=response.content or "（模型没有返回内容）",
+                        answer=answer_text,
                         ok=True,
                         steps=steps,
                         iterations=iteration,
@@ -408,6 +455,7 @@ class GameDataAgent:
                         model=model,
                         usage=usage,
                         elapsed_ms=(time.perf_counter() - start) * 1000,
+                        grounding=grounding,
                     )
 
                 # ---------- ② 做 + ③ 看：逐个执行工具 ----------

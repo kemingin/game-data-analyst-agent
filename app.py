@@ -249,6 +249,14 @@ def build_export_text(answer: AgentAnswer) -> str:
             )
             lines.append(f"   被拦下的原文：{step.content or '（空）'}")
             continue
+        if step.kind == "grounding":
+            detail = step.result or {}
+            lines.append(
+                f"{index}. 第 {step.iteration} 轮：来源校验标注"
+                f"（{detail.get('total', 0)} 个数字中有 "
+                f"{len(detail.get('unexplained') or [])} 个未找到出处，已在答案末尾提示）"
+            )
+            continue
         status = "成功" if step.ok else "失败"
         args = json.dumps(step.arguments, ensure_ascii=False)
         lines.append(
@@ -554,6 +562,14 @@ def render_process_block(turn_index: int, answer: AgentAnswer) -> None:
                     f"（模型给出了无出处的数字，已要求重新取数）"
                 )
                 st.caption(f"被拦下的原文：{step.content or '（空）'}")
+                continue
+            if step.kind == "grounding":
+                detail = step.result or {}
+                st.markdown(
+                    f"**第 {step.iteration} 轮 · ⚠ 来源校验标注** "
+                    f"（{detail.get('total', 0)} 个数字中有 "
+                    f"{len(detail.get('unexplained') or [])} 个未找到出处，已在答案末尾提示）"
+                )
                 continue
 
             icon = "✅" if step.ok else "❌"

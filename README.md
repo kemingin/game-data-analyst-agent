@@ -50,11 +50,15 @@ SQL 由程序从注册表的模板填充生成。模型的能力边界被钉死�
 而不是弹一个点掉就完事的提示框。回答的是上线前必须回答的一题：**Agent 出错了谁负责？**
 
 **⑤ 回答里的数字必须能溯源（第五层防线）。**
-本轮没有任何一次成功的 `query_metric`、答案里却出现了数据型数字 → 判定为疑似编造，
-强制重新取数；补救用尽仍在编，就**拦截整条回答**，宁可不给数字也不给假数字。
+把答案里**每一个数字**反向映射到本次查询的结果集：全都找得到出处 → 原样给；
+少量找不到（占比 ≤ 1/3）→ 回答照给、末尾标注哪几个数没出处；
+超过 1/3 → 判定疑似编造，**拦截整条回答**，宁可不给数字也不给假数字。
 > 这一条是真机验证逼出来的。前四层全在 SQL 出口，隐含假设「模型一定会去查」——
 > 备用模型 GLM-4-Flash 直接跳过全部工具、凭记忆答「日活是 100,000 人」，
 > 四层防线对它完全无感。所以防线要跟着**数据流**走，补在答案出口。
+> 第一版判据只问「有没有成功取过数」，于是「查了 1 次 DAU、又编了 5 个留存率」
+> 能大摇大摆过去；Phase 9 升级为逐数字溯源后，这种混编会被拦下。
+> 判定原语收在 `src/grounding.py`，运行时防线与评测台共用同一份口径。
 > 过程详见[开发复盘记录](file:///e:/TraeCode/Work/JAVAWork/Game%20Data%20Analyst%20Agent/docs/01_项目文档/开发复盘记录_Phase1-3.txt) 7.4 节。
 
 ---
@@ -113,15 +117,23 @@ Game Data Analyst Agent/
 ├── src/
 │   ├── config.py                   # 全局配置：路径 / 业务常量 / SQL 护栏 / LLM 参数
 │   ├── exceptions.py               # 分层异常体系
+│   ├── context.py                  # 【组装根】Phase 7：把库/指标/窗口/白名单打包成 DatasetContext
+│   ├── grounding.py                # 【判据原语】Phase 9：数字抽取/比对/分级，防线与评测台共用
 │   │
-│   ├── data/                       # 【数据层】Phase 1
+│   ├── data/                       # 【数据层】Phase 1 + 7
 │   │   ├── schema.sql              #   建表 DDL（9 张表）
 │   │   ├── indexes.sql             #   索引（导入后再建，快 3~5 倍）
-│   │   └── steam_data.py           #   真实 Steam 数据清洗（去重 16.9 万组重复主键）
+│   │   ├── steam_data.py           #   真实 Steam 数据清洗（去重 16.9 万组重复主键）
+│   │   ├── dataset.py              #   多数据集元信息（Dataset / MetricScheme / DatasetStore）
+│   │   └── upload.py               #   CSV 上传：解码 → 类型推断 → 建表导数
 │   │
-│   ├── metrics/                    # 【指标语义层】Phase 2
+│   ├── metrics/                    # 【指标语义层】Phase 2 + 8
 │   │   ├── metrics_registry.json   #   ★ 12 个指标定义的单一事实来源
-│   │   └── registry.py             #   加载/检索/生成给 LLM 的指标目录
+│   │   ├── registry.py             #   加载/检索/生成给 LLM 的指标目录
+│   │   ├── schema_roles.py         #   Phase 8：列语义角色推断（9 类角色）
+│   │   ├── metric_templates.json   #   Phase 8：指标模板资产（6 个模板）
+│   │   ├── templates.py            #   Phase 8：模板加载 + 六项加载期自检
+│   │   └── draft.py                #   Phase 8：草稿生成/校验/落盘/改指闭环
 │   │
 │   ├── sqlgen/                     # 【指标语义层】Phase 2
 │   │   ├── generator.py            #   模板填参 → 生成「执行版 + 展示版」两份 SQL
@@ -134,14 +146,16 @@ Game Data Analyst Agent/
 │   │   ├── prompts.py              #   系统提示词（分块拼装，动态注入指标目录）
 │   │   └── react_agent.py          #   ReAct 主循环 + 熔断 + 过程记录
 │   │
-│   ├── ui/                         # 【前端层】Phase 4
+│   ├── ui/                         # 【前端层】Phase 4 + 7 + 8
 │   │   ├── charts.py               #   选图策略与画图分离（Plotly）
-│   │   └── overview.py             #   侧边栏数据概览
+│   │   ├── overview.py             #   侧边栏数据概览
+│   │   ├── dataset_panel.py        #   数据集面板：选择器 / 上传 / 兼容性提示
+│   │   └── scheme_builder_panel.py #   指标方案搭建面板（草稿复审 + 手工搭建 + 启用）
 │   │
 │   └── eval/                       # 【评测体系】Phase 5~6
 │       ├── eval_set.json           #   31 条标准用例（只声明期望指标+参数）
 │       ├── eval_set.py             #   用例加载
-│       ├── metrics.py              #   数字抽取 / 四档可追溯率（纯函数）
+│       ├── metrics.py              #   参数校验/汇总统计（数字原语已下沉到 src/grounding.py）
 │       ├── hallucination.py        #   幻觉检测：句子级 + 数字级双口径
 │       ├── judge.py                #   LLM-as-a-Judge 评审（含一致性守卫）
 │       ├── robustness_cases.json   #   21 条鲁棒性用例（判据是行为而非分数）
@@ -156,7 +170,7 @@ Game Data Analyst Agent/
 │   ├── run_hallucination_eval.py   # 专项 · 幻觉与端到端质量（Phase 3，--tag 标轮次）
 │   └── run_robustness_eval.py      # 专项 · 鲁棒性与边界（Phase 4）
 │
-├── tests/                          # 345 个测试函数 / pytest 收集 509 条
+├── tests/                          # 400+ 个测试函数 / pytest 收集 735 条
 ├── docs/                           # 文档与评测产物（按「谁读」分四层，见下表）
 │   ├── 01_项目文档/                 # 第一次接触项目时读
 │   │   ├── data_dictionary.md      # 数据字典
@@ -311,7 +325,7 @@ Phase 6 基线（31 条用例 v1.1，真实调用大模型）：
 
 | 层 | 入口 | 规模 | 成本 | 回答什么问题 |
 | --- | --- | --- | --- | --- |
-| 单元测试 | `python -m pytest -q` | 345 个函数 / 509 条 | 零成本 | 改代码有没有改坏 |
+| 单元测试 | `python -m pytest -q` | 400+ 个函数 / 735 条 | 零成本 | 改代码有没有改坏 |
 | 端到端评测 | `scripts/run_eval.py` | 31 条用例 | 花 token | 答得准不准、贵不贵 |
 | 专项评测 | `scripts/run_*_eval.py` | 5 个 Phase | 花 token | 单点深挖（见下表） |
 
@@ -344,7 +358,8 @@ Phase 6 基线（31 条用例 v1.1，真实调用大模型）：
 
 1. **用架构消除幻觉** —— LLM 只做语义映射，SQL 由受控模板生成，从根上杜绝「模型算错数」。
 2. **五层安全防线** —— 模板受控 / 语法校验 / 只读连接 / 参数绑定 / 答案来源校验，
-   前四层管 SQL 出口，第五层管答案出口（拦「没查库就编数字」），每层都有单测覆盖。
+   前四层管 SQL 出口，第五层管答案出口（逐数字溯源，拦「没查库就编数字」
+   与「查了但混着编」），每层都有单测覆盖。
 3. **真正的超时中断** —— 用 SQLite `progress_handler` 实现，而不是设一个不生效的 `timeout`。
 4. **多供应商降级** —— 按错误类型区分重试策略（401 不重试直接切，429/5xx 指数退避），
    基于 OpenAI 兼容协议做抽象，新增供应商只改配置、不改代码。
@@ -437,7 +452,7 @@ Python 3.11 · SQLite · Streamlit · Plotly · OpenAI SDK（DeepSeek / 智谱 G
 ### 4. 提交前自检
 
 - [ ] `git status` 里没有 `.env`、没有 `data/` 下的大文件（密钥与 107MB 数据库都不入库）
-- [ ] `pytest -q` 全绿（当前 509 条）
+- [ ] `pytest -q` 全绿（当前 735 条）
 - [ ] 新增 / 删除文件后，`docs/01_项目文档/文件清单说明.txt` 的条目与统计已同步更新
 - [ ] README 中提到的每个路径都真实存在（含 `docs/` 四层子目录）
 

@@ -44,301 +44,47 @@
     全都是正确的分析表达。如果放任这个指标这么报，看到的人会以为模型有 21% 在编，
     实际上它一个数都没编。
     评测指标一旦开始误报，就没人再信它了 —— 这比没有指标更糟。
+
+【Phase 9：数字分析原语已下沉到 src/grounding.py】
+
+  「逐数字溯源」让运行时防线也需要「抽数字、比数字」。与其在 Agent 侧另写一套，
+  不如把原语抽到中立模块，两边共用同一口径 —— 否则会出现
+  「运行时拦了、评测说没问题」这种自相矛盾的结论。
+
+  本模块保留的是**评测专属**部分：
+      三、从执行轨迹里提取「模型做了什么」（指标映射 / 参数抽取）
+      四、汇总（EvalSummary / summarize / format_rate）
+  数字分析部分（原第一、二节）改为从 src.grounding 导入。这些名字依然存在于
+  本模块的命名空间里，所以 `from src.eval.metrics import extract_numbers`
+  这类既有引用无需改动。
+
+  为什么是「下沉」而不是「让 Agent 直接 import 本模块」？
+  因为那是**真实的循环导入**（eval → agent 是既定的依赖方向），
+  完整链路图见 src/grounding.py 的模块头注释。
 """
 
 from __future__ import annotations
 
-import re
-from dataclasses import dataclass, field
-from typing import Any, Iterable, Sequence
+from dataclasses import dataclass
+from typing import Any, Sequence
 
-# ===========================================================================
-# 一、数字抽取
-# ===========================================================================
-
-# 日期要先从文本里抠掉。
-# 为什么？因为「2026-09-11」里的 2026 / 09 / 11 会被数字正则当成三个数据值，
-# 结果是每一条回答都产生一堆对不上的数字，对账率被严重拉低。
-# 这是写数字对账最容易踩的第一个坑。
-_DATE_PATTERNS: tuple[str, ...] = (
-    r"\d{4}-\d{1,2}-\d{1,2}",      # 2026-09-11
-    r"\d{4}/\d{1,2}/\d{1,2}",      # 2026/09/11
-    r"\d{4}年\d{1,2}月\d{1,2}日",   # 2026年9月11日
-    r"\d{4}年\d{1,2}月",            # 2026年9月
-    r"\d{1,2}月\d{1,2}日",          # 9月11日
-    r"\d{1,2}/\d{1,2}",            # 9/11
-    # 「09-05」这种省略年份的简写日期。**必须排在 4 位年份的规则之后**，
-    # 否则会把 2026-09-11 拆成「2026」和「-09」两段。
-    # 真实教训：真机评测里 E07 的答案用表格列日期写成 09-05，
-    # 结果 -05 被当成一个数据值判成"存疑"，纯属误报。
-    r"\d{1,2}-\d{1,2}",
+# 数字原语：来自评测台与运行时防线共用的中立模块。
+# 这里再导出一次是为了兼容既有调用方（scripts / tests / eval/hallucination.py）。
+from src.grounding import (  # noqa: F401
+    ExtractedNumber,
+    NumberCheck,
+    check_answer_numbers,
+    collect_reference_values,
+    derived_values,
+    extract_numbers,
+    is_close,
 )
-
-# 版本号要先抠掉：v2.0.0 会被拆成 2.0 和 0 两个"数字"，纯属噪声。
-_VERSION_PATTERN = re.compile(r"[vV]\d+(?:\.\d+)+")
-
-# 数字本体：允许千分位逗号、正负号、小数
-_NUMBER_PATTERN = re.compile(r"[-+]?\d[\d,]*(?:\.\d+)?")
-
-# 「非数据值」的前后缀词表。
-# 「最近 7 天」「第 30 天」「步骤 3」「3 个月」里的数字是**描述性编号或时间量词**，
-# 不是从数据库里读出来的值。抽进来只会制造假的对不上。
-#
-# 为什么前缀要用 endswith 判断而不是只看前一个字符？
-# 因为中文里数字前面经常有空格：「卡在第 3 步」的前一个字符是空格不是「第」，
-# 只看一个字符就会漏判 —— 这是真机评测 E13 暴露出来的问题。
-_NON_DATA_SUFFIXES: frozenset[str] = frozenset("天日月周年周步个")
-_NON_DATA_PREFIXES: tuple[str, ...] = ("第", "步骤", "D", "d")
-
-
-@dataclass(frozen=True)
-class ExtractedNumber:
-    """从回答里抽出来的一个数字，保留原文便于人工核对。"""
-
-    value: float
-    raw: str
-
-
-def extract_numbers(text: str | None) -> list[ExtractedNumber]:
-    """从回答文本里抽出所有「数据类数字」。
-
-    过滤规则（每一条都是为了减少误报，理由都写在上面常量处）：
-      · 日期（含 09-05 这种简写）、版本号先整体移除；
-      · 前面以「第 / 步骤 / D / d」结尾的跳过（第 7 天、步骤 3、D7）；
-      · 后面紧跟天/日/月/周/年/步/个 的跳过（最近 7 天、30 天留存、3 个月）。
-    """
-    if not text:
-        return []
-
-    cleaned = text
-    for pattern in _DATE_PATTERNS:
-        cleaned = re.sub(pattern, " ", cleaned)
-    cleaned = _VERSION_PATTERN.sub(" ", cleaned)
-
-    results: list[ExtractedNumber] = []
-    for match in _NUMBER_PATTERN.finditer(cleaned):
-        raw = match.group(0)
-
-        # 前缀：先 rstrip 掉空白再看结尾，才能处理「第 3 步」这种带空格的写法
-        before = cleaned[: match.start()].rstrip()
-        if before.endswith(_NON_DATA_PREFIXES):
-            continue
-
-        # 后缀：同样先 lstrip 掉空白
-        after_text = cleaned[match.end(): match.end() + 3].lstrip()
-        if after_text and after_text[0] in _NON_DATA_SUFFIXES:
-            continue
-
-        try:
-            value = float(raw.replace(",", ""))
-        except ValueError:  # pragma: no cover - 正则已保证可转，兜底而已
-            continue
-        results.append(ExtractedNumber(value=value, raw=raw))
-
-    return results
-
-
-# ===========================================================================
-# 二、数字比对
-# ===========================================================================
-
-# 容差的设计依据：
-#   · 相对容差 0.5% —— 模型常把 42.66% 写成 42.7%，这是正常四舍五入；
-#   · 绝对容差 0.05 —— 防止数值很小时相对容差失去意义（比如 0.1 的 0.5% 是 0.0005）。
-# 两者取大，兼顾"允许舍入"和"能识别真正的错误"。
-_REL_TOLERANCE: float = 0.005
-_ABS_TOLERANCE: float = 0.05
-
-# 宽松容差：给"口语化近似"留的余地。
-# 为什么必须有这一档？因为真实的分析回答里，「稳定在 530 左右」这种表达非常常见，
-# 它指的是 533 —— 这是人话，不是编造。用严格容差去卡它，只会制造大量假警报。
-# 3% 的取值依据：既覆盖了"说个大概数"的习惯（±3% 以内），
-# 又不至于宽到能把"完全不同量级"的数字放进来。
-_LOOSE_TOLERANCE: float = 0.03
-
-
-def is_close(value: float, candidate: float, tolerance: float = _REL_TOLERANCE) -> bool:
-    """判断两个数是否算「一致」（允许舍入误差）。"""
-    return abs(value - candidate) <= max(abs(candidate) * tolerance, _ABS_TOLERANCE)
-
-
-def derived_values(values: Sequence[float]) -> list[float]:
-    """列出所有「能由参考值算出来」的候选值。
-
-    为什么需要这个？因为一个合格的分析回答必然会包含**衍生指标**：
-    「7 天均值 517」「比低点回升 15%」「峰值与谷值差 79 人」——
-    这些数字在原始数据里根本不存在，但它们完全正确。
-    如果不把它们算作"有出处"，模型越会分析，被判"编造"的数字反而越多，
-    这个指标就变成了「惩罚分析能力」，彻底失去意义。
-
-    覆盖的衍生方式（都是运营分析里最常见的）：
-      合计 / 均值 / 最大值 / 最小值 / 极差
-      两两差值 / 两两比值 / 两两涨跌幅（%）
-    """
-    if not values:
-        return []
-
-    candidates: list[float] = [
-        sum(values),
-        sum(values) / len(values),
-        max(values),
-        min(values),
-        max(values) - min(values),
-    ]
-
-    # 两两组合：为什么连"比值"和"涨跌幅"都要算？
-    # 因为「比上周涨了 15%」这种表述在分析结论里几乎必然出现，
-    # 而它就是 (a-b)/b*100 —— 不把它列进来，几乎每条回答都会被判存疑。
-    #
-    # 为什么涨跌幅要算**两个方向**？因为分母的选取是行业惯例问题，两种都常见：
-    #   · (a-b)/b —— 「比上周涨了 15%」，基准是旧值；
-    #   · (a-b)/a —— 「这一步流失了 41%」，基准是前一步的量（漏斗单步流失率）。
-    # 真机评测 E13 里模型写「第 3 步单步就掉了 41.32%」，用的就是后者，
-    # 只算一个方向的话这条完全正确的分析反而会被判成存疑。
-    for a in values:
-        for b in values:
-            if b == 0:
-                continue
-            candidates.append(a - b)
-            candidates.append(a / b)
-            candidates.append((a - b) / b * 100)
-            if a != 0:
-                candidates.append((a - b) / a * 100)
-
-    return candidates
-
-
-def collect_reference_values(
-    rows: Sequence[dict[str, Any]] | None = None,
-    extra: Iterable[Any] = (),
-) -> list[float]:
-    """把参考数据里所有数值收集成一个集合（用于对账）。
-
-    为什么要连 extra 一起收？因为像「最近 7 天」的 7、样本量、返回行数这些
-    也都是回答里会合法出现的数字。把它们纳入参考集，能显著减少假警报 ——
-    对账这件事，宁可漏报也不要天天误报，误报多了就没人看了。
-    """
-    values: list[float] = []
-    for row in rows or []:
-        for cell in row.values():
-            if isinstance(cell, bool) or cell is None:
-                continue
-            try:
-                values.append(float(cell))
-            except (TypeError, ValueError):
-                continue
-    for item in extra:
-        if item is None or isinstance(item, bool):
-            continue
-        try:
-            values.append(float(item))
-        except (TypeError, ValueError):
-            continue
-    return values
-
-
-@dataclass
-class NumberCheck:
-    """一次「答案数字对账」的结果。
-
-    四个分类桶按可信程度递减排列，只有 unexplained 需要人看。
-    """
-
-    total: int = 0
-    matched: list[tuple[float, float]] = field(default_factory=list)       # 严格命中
-    approximate: list[tuple[float, float]] = field(default_factory=list)   # 口语近似
-    derived: list[tuple[float, float]] = field(default_factory=list)       # 可由参考值推导
-    unexplained: list[ExtractedNumber] = field(default_factory=list)       # 需人工复核
-
-    @property
-    def matched_count(self) -> int:
-        """「有出处」的数字总数（三种可信分类之和）。"""
-        return len(self.matched) + len(self.approximate) + len(self.derived)
-
-    @property
-    def traceable_count(self) -> int:
-        """同 matched_count。语义更清楚的别名，报告里用它。"""
-        return self.matched_count
-
-    @property
-    def rate(self) -> float | None:
-        """数字可追溯率。没有数字时返回 None（不适用，而不是 0%）。"""
-        if self.total == 0:
-            return None
-        return round(self.matched_count / self.total, 4)
-
-    def describe_unexplained(self) -> str:
-        """把存疑数字拼成一行，供报告展示。"""
-        return "、".join(item.raw for item in self.unexplained) or "-"
-
-
-def check_answer_numbers(
-    answer_text: str | None,
-    reference_values: Sequence[float],
-    extra_allowed: Iterable[Any] = (),
-) -> NumberCheck:
-    """把回答里的数字逐个拿去参考数据里找出处。
-
-    三级判定顺序（严格 → 近似 → 推导），先命中先归类：
-      1. 严格容差命中参考值        → matched
-      2. 宽松容差命中参考值        → approximate（口语近似）
-      3. 命中由参考值推导出的候选值 → derived（均值/差值/涨幅…）
-      4. 都不命中                  → unexplained（**唯一需要人工看的**）
-
-    为什么要按这个顺序？因为越靠前的判定越"硬"。如果先判推导，
-    一个恰好等于某对数值之差的编造数字就会被归成"可推导"，把真问题藏起来。
-    """
-    allowed = list(reference_values) + collect_reference_values(extra=extra_allowed)
-    numbers = extract_numbers(answer_text)
-
-    check = NumberCheck(total=len(numbers))
-    if not numbers:
-        return check
-
-    # 衍生候选值只在需要时算一次，避免每个数字都重算一遍
-    derived_pool: list[float] | None = None
-
-    for item in numbers:
-        strict_hit = next((c for c in allowed if is_close(item.value, c)), None)
-        if strict_hit is not None:
-            check.matched.append((item.value, strict_hit))
-            continue
-
-        loose_hit = next(
-            (c for c in allowed if is_close(item.value, c, tolerance=_LOOSE_TOLERANCE)), None
-        )
-        if loose_hit is not None:
-            check.approximate.append((item.value, loose_hit))
-            continue
-
-        if derived_pool is None:
-            derived_pool = derived_values(allowed)
-        derived_hit = next(
-            (c for c in derived_pool if is_close(item.value, c, tolerance=_LOOSE_TOLERANCE)), None
-        )
-        if derived_hit is not None:
-            check.derived.append((item.value, derived_hit))
-            continue
-
-        check.unexplained.append(item)
-
-    return check
+from src.grounding import _step_field  # 同包内共用的「轨迹取值」原语
 
 
 # ===========================================================================
 # 三、从执行轨迹里提取「模型做了什么」
 # ===========================================================================
-
-def _step_field(step: Any, name: str, default: Any = None) -> Any:
-    """同时支持 AgentStep 对象和它的 to_dict() 结果。
-
-    为什么要兼容两种形态？因为评测既要能对「刚跑完的活对象」评分，
-    也要能对「存盘后重新读出来的 JSON」评分（离线复算历史评测结果）。
-    """
-    if isinstance(step, dict):
-        return step.get(name, default)
-    return getattr(step, name, default)
-
 
 def metric_calls(steps: Sequence[Any] | None) -> list[dict[str, Any]]:
     """把执行轨迹里所有 query_metric 调用提取成 [{metric_id, params, ok}, ...]。

@@ -53,12 +53,9 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from src import config as cfg                                     # noqa: E402
-from src.agent.react_agent import (                               # noqa: E402
-    AgentAnswer,
-    GameDataAgent,
-    _has_ungrounded_number,
-)
+from src.agent.react_agent import AgentAnswer, GameDataAgent      # noqa: E402
 from src.eval.metrics import metric_calls                         # noqa: E402
+from src.grounding import extract_numbers                         # noqa: E402
 
 DEFAULT_CASES_PATH: Path = (
     Path(__file__).resolve().parent.parent / "src" / "eval" / "robustness_cases.json"
@@ -276,17 +273,19 @@ def evaluate_assertions(
         )
 
     # ⑤ 不得出现无出处数字。
-    #    ★ 这里必须**连前提条件一起复用**，不能只搬函数（这是本 Phase 踩到的坑）：
-    #      _has_ungrounded_number 的语义是「文本里有没有数据型数字」，
-    #      而第五层防线真正的判据是「**一次都没成功取数** 且 有数据型数字」。
-    #      第一版只搬了函数、漏了前提，结果 R03「数据」明明成功查了 2 次、
+    #    ★ 这里必须**连前提条件一起复用**，不能只搬函数（这是 Phase 4 踩到的坑）：
+    #      第五层防线真正的判据是「**一次都没成功取数** 且 有数据型数字」，
+    #      而「文本里有没有数据型数字」只是它的一个组成部分。
+    #      第一版只搬了后半句、漏了前提，结果 R03「数据」明明成功查了 2 次、
     #      数字全部有出处，却被判成「出现了数据型数字」而失败 ——
     #      这是评测台自己制造的假警报，不是模型的问题。
-    #      修法：把 success_query_count == 0 写进断言的前置条件，
-    #      让判据与第五层防线**逐字一致**。
+    #
+    #    Phase 9 起，「抽数字」这个动作改为调用 src/grounding.extract_numbers ——
+    #      也就是运行时防线自己用的那份实现。评测台不再自己维护一套正则，
+    #      避免出现「线上判据和评测判据不一致」这类假警报（同源比对的意义就在这）。
     if case.expect_no_data_number:
         no_grounding = success_query_count == 0
-        has_number = _has_ungrounded_number(text)
+        has_number = bool(extract_numbers(text))
         checks.append(
             Assertion(
                 "没取数就不得出现数字",
@@ -427,7 +426,7 @@ def run_case(case: RobustnessCase, agent: GameDataAgent) -> CaseResult:
         guard_count=guard_count,
         clarify=has_clarify(text),
         refusal=has_refusal(text),
-        has_data_number=_has_ungrounded_number(text),
+        has_data_number=bool(extract_numbers(text)),
         iterations=answer.iterations,
         usage=dict(answer.usage or {}),
         elapsed_ms=answer.elapsed_ms,
@@ -665,8 +664,10 @@ def main() -> int:
     add("     · 「明确拒绝」= 命中拒绝信号词表（不能/无法/不支持/抱歉/超出…）。")
     add("       局限：同义表达可能漏判，所以失败项必须人工看原始回答。")
     add("     · 「没取数就不得出现数字」= 「一次都没成功取数」AND「文本里有数据型数字」，")
-    add("       数字形态的判断复用 Agent 第五层防线**同一个函数**（_has_ungrounded_number：")
-    add("       剔日期、剔版本号，再看百分比/千分位/3 位以上数字）。")
+    add("       数字形态的判断复用 Agent 第五层防线**同一份实现**（src/grounding.py 的")
+    add("       extract_numbers：剔日期、剔版本号，再看百分比/千分位/3 位以上数字）。")
+    add("       ★ Phase 9 起该函数已从评测台搬到中立模块 src/grounding.py ——")
+    add("         运行时防线与评测台共用同一份，不再各写一套正则。")
     add("       ★ 这里踩过一次坑：第一版只搬了函数、漏了「没取数」这个前提，")
     add("         结果 R03 明明成功查了 2 次、数字全部有出处，却被判成「出现数据型数字」。")
     add("         教训：**复用判据要连它的前提条件一起复用，不能只搬函数本身。**")

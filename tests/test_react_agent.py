@@ -426,13 +426,16 @@ def test_default_agent_constructs_without_api_key():
 #     · 该拦的必须拦住（编数字不给用户看）
 #     · 不该拦的绝不能拦（正确拒答、寒暄、已取数后的作答）
 
-def test_ungrounded_number_detection_ignores_dates_and_versions():
-    """检测函数必须放过日期与版本号 —— 否则会把正确的拒答误判成编造。
+def test_number_extraction_ignores_dates_and_versions():
+    """数字抽取必须放过日期与版本号 —— 否则会把正确的拒答误判成编造。
 
     这条测试的样本全部取自 Phase 5/6 真机跑出来的**真实回答**，
     不是凭空构造的，所以它测的是「线上真的会遇到的文本形态」。
+
+    Phase 9 起这段逻辑搬到了 src/grounding.py（运行时防线与评测台共用），
+    所以这里直接测那个共用原语 —— 测的就是线上真正跑的那份代码。
     """
-    from src.agent.react_agent import _has_ungrounded_number
+    from src.grounding import extract_numbers
 
     # 真实拒答文案：含日期、窗口天数，但没有数据值 → 不该被判为编造
     refusal = (
@@ -440,21 +443,62 @@ def test_ungrounded_number_detection_ignores_dates_and_versions():
         "去年 12 月（2025-12）超出了这个范围，暂时查不了。"
         "想看活跃趋势的话，我可以给你最近 7 天或最近 30 天的日活走势。"
     )
-    assert _has_ungrounded_number(refusal) is False
+    assert extract_numbers(refusal) == []
 
     # 版本对比类回答里出现 v2.0.0 也不能算数据值
-    assert _has_ungrounded_number("v2.0.0 上线后留存有所提升。") is False
+    assert extract_numbers("v2.0.0 上线后留存有所提升。") == []
 
     # 真实编造文案：千分位数字 → 必须被抓出来
-    assert _has_ungrounded_number("最近 7 天的日活是 100,000 人。") is True
+    assert [n.value for n in extract_numbers("最近 7 天的日活是 100,000 人。")] == [100000.0]
     # 百分比形态
-    assert _has_ungrounded_number("次日留存率大约是 45.00%。") is True
+    assert [n.value for n in extract_numbers("次日留存率大约是 45.00%。")] == [45.0]
     # 无千分位的大数字
-    assert _has_ungrounded_number("日活大约 120000 左右。") is True
+    assert [n.value for n in extract_numbers("日活大约 120000 左右。")] == [120000.0]
 
     # 空文本、纯寒暄不应误报
-    assert _has_ungrounded_number("") is False
-    assert _has_ungrounded_number("你好，我是游戏数据智能分析师。") is False
+    assert extract_numbers("") == []
+    assert extract_numbers("你好，我是游戏数据智能分析师。") == []
+
+
+# ===========================================================================
+# 五、第五层防线（逐数字溯源，Phase 9）
+# ===========================================================================
+#
+# 这里用「假工具执行器」而不是真库，原因值得写清楚：
+#   新判据要拿答案里的数字去比对**查询结果集**，而真库里的日活随日期窗口浮动，
+#   没法在剧本里写死一个必然命中的数字。用固定结果集，测的才是判据本身，
+#   而不是「今天的库里恰好是什么数」。
+
+class StubToolExecutor:
+    """假工具执行器：query_metric 永远返回同一份固定结果。"""
+
+    def __init__(self, rows: list[dict]) -> None:
+        self.rows = rows
+        self.calls: list[tuple[str, object]] = []
+
+    @property
+    def definitions(self) -> list[dict]:
+        return [{"type": "function", "function": {"name": "query_metric"}}]
+
+    def execute(self, name: str, arguments=None):
+        from src.agent.tools import ToolResult
+
+        self.calls.append((name, arguments))
+        if name != "query_metric":
+            return ToolResult(name=name, ok=False, content=f"未实现：{name}", error="未实现")
+        return ToolResult(
+            name=name,
+            ok=True,
+            content="| dau |\n| 533 |",
+            data={
+                "metric_id": "dau",
+                "metric_name": "日活跃用户数",
+                "params": {"day_n": 7},
+                "columns": ["dau"],
+                "rows": self.rows,
+                "row_count": len(self.rows),
+            },
+        )
 
 
 def test_guard_intercepts_fabrication_and_forces_requery():
@@ -491,16 +535,18 @@ def test_guard_intercepts_fabrication_and_forces_requery():
 
 
 def test_guard_does_not_fire_when_data_came_from_tools():
-    """已经取过数了就不该拦 —— 基于工具返回的数字作答是正常行为。
+    """已经取过数、且数字确实来自结果集 → 不该拦。
 
     这是防「优化过头」的护栏：校验太激进会把正常的分析流程打断，
     每打断一次就多花一轮 token，还拖慢响应。
     """
+    tools = StubToolExecutor(rows=[{"dau": 533}])
     agent, llm = build_agent(
         [
             make_response(tool_calls=[("c1", "query_metric", {"metric_id": "dau"})]),
-            make_response(content="最近 7 天的日活平均是 96,000 人。"),
-        ]
+            make_response(content="最近 7 天的日活是 533 人。"),
+        ],
+        tools=tools,
     )
 
     result = agent.ask("最近 7 天的日活是多少？")
@@ -508,8 +554,69 @@ def test_guard_does_not_fire_when_data_came_from_tools():
     assert result.ok is True
     assert [s.kind for s in result.steps] == ["tool_call", "final_answer"]
     assert result.steps[0].ok is True
-    assert result.answer == "最近 7 天的日活平均是 96,000 人。"
+    assert result.answer == "最近 7 天的日活是 533 人。"      # 原文未改动
+    assert result.grounding["decision"] == "pass"
+    assert result.grounding["traceable"] == 1
     assert len(llm.calls) == 2          # 没有多余的重试
+
+
+def test_guard_blocks_fabricated_numbers_even_after_a_successful_query():
+    """★ 新判据的核心增量：查过一次数，也不能给编造的数字放行。
+
+    这正是旧判据（Phase 6）的漏洞 —— 判据是「一次都没成功取数 且 有数字」，
+    只要有过一次成功取数就整条放行。于是「查了 DAU、又顺手编了留存率和付费率」
+    能大摇大摆通过。新判据逐数字对账，这里应当拦下。
+    """
+    tools = StubToolExecutor(rows=[{"dau": 533}])
+    fabricated = "日活 533 人，次日留存 42.66%，付费率 3.85%。"
+    agent, llm = build_agent(
+        [
+            make_response(tool_calls=[("c1", "query_metric", {"metric_id": "dau"})]),
+            make_response(content=fabricated),
+            make_response(content=fabricated),
+        ],
+        tools=tools,
+    )
+
+    result = agent.ask("最近 7 天的日活、留存和付费率怎么样？")
+
+    assert result.ok is False
+    assert "42.66" not in result.answer and "3.85" not in result.answer
+    assert [s.kind for s in result.steps] == ["tool_call", "guard", "final_answer"]
+    # 关键证据：这次**确实成功取过数**（旧判据会因此整条放行），
+    # 但它仍然被拦下了 —— 说明防线不再被「一次成功取数」糊弄过去。
+    assert result.steps[1].result["grounded_calls"] == 1
+    assert result.grounding["decision"] == "block"
+    assert sorted(result.grounding["unexplained"]) == ["3.85", "42.66"]
+
+
+def test_guard_annotates_when_only_a_few_numbers_lack_source():
+    """分级处置的中间档：少量数字无出处 → 回答照给，末尾如实标注。
+
+    为什么要有这一档而不是一律拦？因为「对不上」不完全等于编造：
+    口语化近似、推导池没覆盖到的表达都会被归到「无出处」。
+    一律拦截会把一整段正确推理因为一个数字废掉，用户也就不再信这个提示了。
+    """
+    tools = StubToolExecutor(rows=[{"dau": 533}, {"dau": 540}])
+    agent, llm = build_agent(
+        [
+            make_response(tool_calls=[("c1", "query_metric", {"metric_id": "dau"})]),
+            make_response(content="最近两天日活为 533 人和 540 人，均值 536.5 人，另有 3 项渠道数据缺失。"),
+        ],
+        tools=tools,
+    )
+
+    result = agent.ask("最近两天日活怎么样？")
+
+    assert result.ok is True
+    assert result.grounding["decision"] == "annotate"
+    # 原文保留（不改正文），只在末尾追加一行提示
+    assert result.answer.startswith("最近两天日活为 533 人")
+    assert "未能在本次查询结果中找到出处" in result.answer
+    assert "3" in result.answer.split("注：")[1]      # 提示里点名了那个数字
+    # 标注这件事要留在 trace 里，前端才能解释「为什么答案末尾多了一行」
+    assert [s.kind for s in result.steps] == ["tool_call", "final_answer", "grounding"]
+    assert len(llm.calls) == 2          # 标注不是拦截，不触发重试
 
 
 def test_guard_does_not_fire_on_legitimate_refusal():

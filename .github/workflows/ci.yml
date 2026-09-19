@@ -1,0 +1,120 @@
+# ============================================================================
+# GitHub Actions —— 持续集成（CI）
+# ============================================================================
+#
+# 【这个工作流解决什么问题？】
+#
+#   在此之前，「743 条单测全绿」「没有真实数据也能建库」这两句话，
+#   只存在于作者本机的终端输出里 —— 评审者 clone 下来看到的只是 README 的**声称**，
+#   他没有任何办法确认。CI 把「作者声称」变成「平台在干净环境里替你验证过的绿勾」。
+#
+#   顺带还替项目守住一件最容易坏的事：
+#   第 4 步会在**没有那 111MB 真实 Steam 数据**的环境里跑一遍建库 ——
+#   这正是 Phase 10 手工验过的路径，交给 CI 之后每次提交都会自动重验，
+#   不会因为后来某次改动悄悄退化成「只有作者本机能建库」。
+#
+# 【为什么只做「测试 + 建库」，不在这里 docker build？】
+#   因为这两步已经覆盖了核心风险（别人 clone 下来能不能跑起来），
+#   且 1~2 分钟就能跑完。docker build 要拉几百 MB 依赖、装 pandas/numpy，
+#   每次 CI 多花几分钟，而镜像的正确性已在 Phase 10 用真机验证过 ——
+#   收益不抵成本，故不放进每次提交的路径里。
+#
+# 【为什么先建库再跑测试？】
+#   因为有一批测试（test_executor / test_tools）带 skipif：
+#   数据库不存在时它们会**跳过**而不是失败。若先跑测试，
+#   在「建库失败」的场景下 CI 反而可能一片绿 —— 跳过是不报错的。
+#   先建库，就堵住了这个「假绿」。
+# ============================================================================
+
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:        # 允许在 Actions 页面手动点一下就跑，方便调试
+
+# 同一分支连续推送时，取消上一次还在跑的旧任务 ——
+# 避免「推了 3 次、3 个任务排队」，只看最后一次的结果就够了。
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    name: 单元测试 + 无数据建库
+    runs-on: ubuntu-latest
+    timeout-minutes: 15       # 兜底：万一卡住，不要让任务挂几小时
+
+    steps:
+      - name: 拉取代码
+        uses: actions/checkout@v4
+
+      - name: 准备 Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"   # 与 Dockerfile、本地开发环境保持一致
+          cache: pip               # 缓存 pip 下载，后续运行快很多
+
+      - name: 安装依赖
+        run: pip install -r requirements.txt
+
+      # ----------------------------------------------------------------------
+      # 第 4 步：建库链路
+      # 仓库里没有 data/（已被 .gitignore 排除），所以这一步是在**完全空数据**的
+      # 环境里跑 —— 正是「别人 clone 下来」的真实处境。
+      # generate_mock_data 会自动走「合成画像」后备路径（见该脚本的 load_profile）。
+      # 两条命令用 && 串起来：任一步失败立即让 CI 变红。
+      # ----------------------------------------------------------------------
+      - name: 建库链路（无真实 Steam 数据）
+        run: |
+          python scripts/generate_mock_data.py
+          python scripts/build_database.py
+
+      # ----------------------------------------------------------------------
+      # 第 5 步：断言建库产物
+      # 【为什么要单独断言，而不是看上一步「没报错」就算过？】
+      #   因为「脚本没崩」不等于「产出了可用的库」。上一步的 verify() 只把
+      #   校验结果**打印**出来（「通过 / 不通过」），并不返回非零退出码 ——
+      #   所以如果只依赖退出码，建库悄悄产出一个空库时 CI 依然全绿。
+      #   这里把「应该有什么」写成断言，让 CI 真的能因为数据不对而变红。
+      # ----------------------------------------------------------------------
+      - name: 校验建库产物
+        run: |
+          python - <<'PY'
+          import sqlite3
+          from pathlib import Path
+
+          db = Path("data/game_analytics.db")
+          assert db.exists(), "数据库文件未生成"
+
+          conn = sqlite3.connect(f"file:{db}?mode=ro", uri=True)
+          tables = {r[0] for r in conn.execute(
+              "SELECT name FROM sqlite_master WHERE type='table'")}
+
+          expected = {
+              "dim_user", "dim_game", "dim_version", "dim_channel", "dim_position",
+              "user_game", "game_event_log", "user_daily_snapshot",
+              "hr_recruitment_data",
+          }
+          missing = expected - tables
+          assert not missing, f"缺表：{missing}"
+
+          # dim_game / user_game 在精简版里**本来就该是空的**（它们依赖那 111MB
+          # 真实 Steam 数据），所以只断言核心的三张表非空。
+          for t in ("dim_user", "game_event_log", "user_daily_snapshot"):
+              n = conn.execute(f"SELECT COUNT(*) FROM {t}").fetchone()[0]
+              assert n > 0, f"{t} 无数据 —— 建库链路没真正产出"
+
+          print("建库产物校验通过：9 张表齐全，核心表非空")
+          PY
+
+      # ----------------------------------------------------------------------
+      # 第 6 步：单元测试
+      # 此时数据库已存在，所以带 skipif 的测试会真正执行而不是跳过。
+      # 不写 -q：静默与测试目录都已配在 pyproject.toml，命令保持最短。
+      # 用 `python -m pytest` 而不是裸 `pytest`，确保用的是当前解释器的那一份。
+      # ----------------------------------------------------------------------
+      - name: 单元测试
+        run: python -m pytest

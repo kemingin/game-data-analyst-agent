@@ -1,5 +1,7 @@
 # 🎮 游戏数据智能分析师 Agent（Game Data Analyst Agent）
 
+[![CI](https://github.com/kemingin/game-data-analyst-agent/actions/workflows/ci.yml/badge.svg)](https://github.com/kemingin/game-data-analyst-agent/actions/workflows/ci.yml)
+
 > 用中文提问 → 自动映射到标准指标口径 → 生成并校验 SQL → 查真实数据 → 给出结论与图表。
 > **大模型不写 SQL，也不编数字。**
 
@@ -111,10 +113,12 @@ SQL 由程序从注册表的模板填充生成。模型的能力边界被钉死�
 ```
 Game Data Analyst Agent/
 ├── app.py                          # Streamlit 前端主入口
-├── requirements.txt
+├── requirements.txt                # 依赖清单（★ 版本已钉死 ==，不是 >=）
+├── pyproject.toml                  # 工具配置：pytest 的 testpaths / addopts
 ├── .env.example                    # API Key 模板（复制为 .env 后填入）
 ├── Dockerfile                      # 【Phase 10】镜像定义：装依赖 → 生成数据 → 建库 → 起服务
 ├── .dockerignore                   # 【Phase 10】构建上下文排除（★ 第一职责是挡住 .env）
+├── .github/workflows/ci.yml        # 【Phase 11】CI：无数据建库 + 743 条单测
 │
 ├── src/
 │   ├── config.py                   # 全局配置：路径 / 业务常量 / SQL 护栏 / LLM 参数
@@ -264,8 +268,11 @@ python scripts/run_robustness_eval.py                      # Phase 4 · 鲁棒�
 ### 6. 跑测试
 
 ```bash
-python -m pytest -q
+python -m pytest
 ```
+
+> 测试目录与 `-q` 已配在 [pyproject.toml](file:///e:/TraeCode/Work/JAVAWork/Game%20Data%20Analyst%20Agent/pyproject.toml)，
+> 所以在项目根目录直接敲 `pytest` 也是一样的效果。
 
 ### 7. 用 Docker 跑（Phase 10 · 一条命令，免装环境）
 
@@ -297,11 +304,37 @@ Key 只能通过 `-e` 运行时注入（镜像里不含任何密钥，`.env` 已
 
 > **验证边界**：镜像已在 Windows + WSL2 后端真机验证通过（2026-09-19）：
 > `docker build` 成功，镜像 990MB；容器 `healthy`；宿主访问 `/_stcore/health`
-> 返回 `ok`、首页 200 / 7,260 字节；容器内时区为 CST、与宿主一致。
-> 已知的两处环境前提：① 本机需能访问 Docker Hub（国内需给 Docker Desktop 配代理）；
-> ② `requirements.txt` 用 `>=` 下限约束，pip 装的是当天最新版 —— 实测与开发环境
-> 同代（pandas 3.0.x / numpy 2.4.6 / streamlit 1.64.0），但**换一天构建可能装到更新的版本**。
+> 返回 `ok`、首页 200 / 7,260 字节；容器内时区为 CST、与宿主一致；
+> **容器内跑 `python -m pytest` → 743 passed**（干净 Linux + 精简版数据）。
+> 已知的环境前提：本机需能访问 Docker Hub（国内需给 Docker Desktop 配代理）。
 > 详见《测试复盘记录》12.3。
+
+### 8. 持续集成（CI · 每次推送自动验）
+
+[.github/workflows/ci.yml](file:///e:/TraeCode/Work/JAVAWork/Game%20Data%20Analyst%20Agent/.github/workflows/ci.yml)
+在干净的 Ubuntu 上依次跑三步：
+
+1. **无数据建库链路** —— 仓库里没有 `data/`（已被 `.gitignore` 排除），
+   所以这一步是在**完全空数据**的环境里跑 `generate_mock_data.py` + `build_database.py`。
+   这正是「别人 clone 下来」的真实处境。
+2. **断言建库产物** —— 9 张表齐全、`dim_user` / `game_event_log` /
+   `user_daily_snapshot` 非空。（`dim_game` / `user_game` 在精简版里**本该为空**，故不断言。）
+3. **743 条单元测试**。
+
+> **为什么顺序是「先建库、再测试」？** 有一批测试带 `skipif`：数据库不存在时
+> 它们会**跳过**而不是失败。若顺序反了，在「建库失败」的场景下 CI 反而一片绿 ——
+> 跳过是不报错的。这个顺序堵住了「假绿」。
+>
+> **为什么 CI 里不跑 `docker build`？** 因为上面三步已覆盖核心风险（别人 clone
+> 下来能不能跑起来），且一两分钟跑完；`docker build` 要拉几百 MB 依赖，
+> 每次提交都多花几分钟，而镜像正确性已用真机验证过 —— 收益不抵成本。
+
+**依赖已钉死版本。** `requirements.txt` 用 `==` 而非 `>=`：
+写 `>=` 时 pip 装的是「当天最新的兼容版」，今天和下周可能装出两套版本 ——
+别人复现不出报告里的读数，CI 也可能因为上游发新版而突然变红，而红的原因和你的改动无关。
+现在这些版本号来自 2026-09-19 在 `python:3.11-slim` 里的全新安装解析结果，
+并已在**该环境下跑通全部 743 条单测** —— 是一组被验证过的组合，不是猜的。
+升级方式：显式改版本号，然后重跑测试与 CI。
 
 ---
 
@@ -363,7 +396,7 @@ Phase 6 基线（31 条用例 v1.1，真实调用大模型）：
 
 | 层 | 入口 | 规模 | 成本 | 回答什么问题 |
 | --- | --- | --- | --- | --- |
-| 单元测试 | `python -m pytest -q` | 400+ 个函数 / 743 条 | 零成本 | 改代码有没有改坏 |
+| 单元测试 | `python -m pytest` | 400+ 个函数 / 743 条 | 零成本 | 改代码有没有改坏 |
 | 端到端评测 | `scripts/run_eval.py` | 31 条用例 | 花 token | 答得准不准、贵不贵 |
 | 专项评测 | `scripts/run_*_eval.py` | 5 个 Phase | 花 token | 单点深挖（见下表） |
 
@@ -435,7 +468,7 @@ Phase 6 基线（31 条用例 v1.1，真实调用大模型）：
 | --- | --- |
 | [开发复盘记录](file:///e:/TraeCode/Work/JAVAWork/Game%20Data%20Analyst%20Agent/docs/01_项目文档/开发复盘记录_Phase1-3.txt) | 全流程复盘：每个设计决策的取舍、踩过的坑、常见追问的答法 |
 | [测试复盘记录](file:///e:/TraeCode/Work/JAVAWork/Game%20Data%20Analyst%20Agent/docs/02_测试复盘/测试复盘记录.txt) | 测试体系全档案：三层的分工、幻觉两个口径、评测台自身五次出错、常见追问 |
-| [文件清单说明](file:///e:/TraeCode/Work/JAVAWork/Game%20Data%20Analyst%20Agent/docs/01_项目文档/文件清单说明.txt) | 逐文件说明：115 个文件各是干什么的、在架构哪个位置、设计要点是什么 |
+| [文件清单说明](file:///e:/TraeCode/Work/JAVAWork/Game%20Data%20Analyst%20Agent/docs/01_项目文档/文件清单说明.txt) | 逐文件说明：117 个文件各是干什么的、在架构哪个位置、设计要点是什么 |
 | [数据字典](file:///e:/TraeCode/Work/JAVAWork/Game%20Data%20Analyst%20Agent/docs/01_项目文档/data_dictionary.md) | 9 张表的字段说明与业务含义 |
 | [评测报告](file:///e:/TraeCode/Work/JAVAWork/Game%20Data%20Analyst%20Agent/docs/03_评测报告/评测报告_Phase6.txt) | 端到端 31 条用例的逐例明细与总览 |
 | [专项报告](file:///e:/TraeCode/Work/JAVAWork/Game%20Data%20Analyst%20Agent/docs/03_评测报告/工具调用测试报告_Phase1.txt) | 5 个专项的原始留档（工具 / 性能缓存 / 幻觉质量 / 鲁棒性边界） |
@@ -449,7 +482,7 @@ Phase 6 基线（31 条用例 v1.1，真实调用大模型）：
 
 ## 十一、技术栈
 
-Python 3.11 · SQLite · Streamlit · Plotly · OpenAI SDK（DeepSeek / 智谱 GLM）· pytest · Docker
+Python 3.11 · SQLite · Streamlit · Plotly · OpenAI SDK（DeepSeek / 智谱 GLM）· pytest · Docker · GitHub Actions
 
 ---
 
@@ -490,7 +523,7 @@ Python 3.11 · SQLite · Streamlit · Plotly · OpenAI SDK（DeepSeek / 智谱 G
 ### 4. 提交前自检
 
 - [ ] `git status` 里没有 `.env`、没有 `data/` 下的大文件（密钥与 107MB 数据库都不入库）
-- [ ] `pytest -q` 全绿（当前 743 条）
+- [ ] `python -m pytest` 全绿（当前 743 条）
 - [ ] 新增 / 删除文件后，`docs/01_项目文档/文件清单说明.txt` 的条目与统计已同步更新
 - [ ] README 中提到的每个路径都真实存在（含 `docs/` 四层子目录）
 

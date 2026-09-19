@@ -118,7 +118,7 @@ Game Data Analyst Agent/
 ├── .env.example                    # API Key 模板（复制为 .env 后填入）
 ├── Dockerfile                      # 【Phase 10】镜像定义：装依赖 → 生成数据 → 建库 → 起服务
 ├── .dockerignore                   # 【Phase 10】构建上下文排除（★ 第一职责是挡住 .env）
-├── .github/workflows/ci.yml        # 【Phase 11】CI：无数据建库 + 743 条单测
+├── .github/workflows/ci.yml        # 【Phase 11】CI：无数据建库 + 全量单测
 │
 ├── src/
 │   ├── config.py                   # 全局配置：路径 / 业务常量 / SQL 护栏 / LLM 参数
@@ -176,7 +176,7 @@ Game Data Analyst Agent/
 │   ├── run_hallucination_eval.py   # 专项 · 幻觉与端到端质量（Phase 3，--tag 标轮次）
 │   └── run_robustness_eval.py      # 专项 · 鲁棒性与边界（Phase 4）
 │
-├── tests/                          # 400+ 个测试函数 / pytest 收集 743 条
+├── tests/                          # 400+ 个测试函数 / pytest 收集 749 条
 ├── docs/                           # 文档与评测产物（按「谁读」分四层，见下表）
 │   ├── 01_项目文档/                 # 第一次接触项目时读
 │   │   ├── data_dictionary.md      # 数据字典
@@ -361,7 +361,7 @@ docker build \
    这正是「别人 clone 下来」的真实处境。
 2. **断言建库产物** —— 9 张表齐全、`dim_user` / `game_event_log` /
    `user_daily_snapshot` 非空。（`dim_game` / `user_game` 在精简版里**本该为空**，故不断言。）
-3. **743 条单元测试**。
+3. **749 条单元测试**。
 
 > **为什么顺序是「先建库、再测试」？** 有一批测试带 `skipif`：数据库不存在时
 > 它们会**跳过**而不是失败。若顺序反了，在「建库失败」的场景下 CI 反而一片绿 ——
@@ -375,7 +375,8 @@ docker build \
 写 `>=` 时 pip 装的是「当天最新的兼容版」，今天和下周可能装出两套版本 ——
 别人复现不出报告里的读数，CI 也可能因为上游发新版而突然变红，而红的原因和你的改动无关。
 现在这些版本号来自 2026-09-19 在 `python:3.11-slim` 里的全新安装解析结果，
-并已在**该环境下跑通全部 743 条单测** —— 是一组被验证过的组合，不是猜的。
+并已在**该环境下跑通当时的全量单测**（743 条，此后新增的 6 条纯文本断言同样通过）
+—— 是一组被验证过的组合，不是猜的。
 升级方式：显式改版本号，然后重跑测试与 CI。
 
 ---
@@ -438,7 +439,7 @@ Phase 6 基线（31 条用例 v1.1，真实调用大模型）：
 
 | 层 | 入口 | 规模 | 成本 | 回答什么问题 |
 | --- | --- | --- | --- | --- |
-| 单元测试 | `python -m pytest` | 400+ 个函数 / 743 条 | 零成本 | 改代码有没有改坏 |
+| 单元测试 | `python -m pytest` | 400+ 个函数 / 749 条 | 零成本 | 改代码有没有改坏 |
 | 端到端评测 | `scripts/run_eval.py` | 31 条用例 | 花 token | 答得准不准、贵不贵 |
 | 专项评测 | `scripts/run_*_eval.py` | 5 个 Phase | 花 token | 单点深挖（见下表） |
 
@@ -565,7 +566,7 @@ Python 3.11 · SQLite · Streamlit · Plotly · OpenAI SDK（DeepSeek / 智谱 G
 ### 4. 提交前自检
 
 - [ ] `git status` 里没有 `.env`、没有 `data/` 下的大文件（密钥与 107MB 数据库都不入库）
-- [ ] `python -m pytest` 全绿（当前 743 条）
+- [ ] `python -m pytest` 全绿（当前 749 条）
 - [ ] 新增 / 删除文件后，`docs/01_项目文档/文件清单说明.txt` 的条目与统计已同步更新
 - [ ] README 中提到的每个路径都真实存在（含 `docs/` 四层子目录）
 

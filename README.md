@@ -279,22 +279,63 @@ python -m pytest
 镜像**自给自足**：构建时自动生成模拟数据、建库，不需要下载那 111MB 真实 Steam 数据。
 
 ```bash
-docker build -t gda .      # 构建（内含生成数据 + 建库，几十秒）
+docker build -t gda .      # 构建（内含生成数据 + 建库）
 docker run --rm -p 8501:8501 -e DEEPSEEK_API_KEY=sk-xxx gda
 ```
 
 不带 Key 也能启动 —— 前端会显示「尚未配置 API Key」的引导文案，方便先看产品形态；
 Key 只能通过 `-e` 运行时注入（镜像里不含任何密钥，`.env` 已被 `.dockerignore` 排除）。
 
-> **跑之前先确认这两件事**（否则会卡在与代码无关的地方）：
-> 1. **引擎在跑，不只是 CLI 在**。`docker --version` 有输出只说明装了 CLI；
->    引擎要等 Docker Desktop 启动后才可用，否则报
->    `failed to connect to the docker API at npipe://...`。
->    判断方法：`docker info` 能返回内容就算就绪。
-> 2. **能访问 Docker Hub**。`registry-1.docker.io` 在国内直连会超时，而
->    **Docker Desktop 默认不走 Windows 系统代理** —— 需要在
->    Settings → Resources → Proxies 里单独填（如 `http://127.0.0.1:7890`）。
->    改完必须**重启 Docker Desktop** 才生效。
+> **跑之前先确认：引擎在跑，不只是 CLI 在。** `docker --version` 有输出只说明装了 CLI；
+> 引擎要等 Docker Desktop 启动后才可用，否则报
+> `failed to connect to the docker API at npipe://...`。
+> 判断方法：`docker info` 能返回内容就算就绪。
+
+#### 国内网络下构建卡住怎么办
+
+一次 `docker build` 有**两条独立的联网链路**，它们各走各的代理，**只解决一条仍会卡**：
+
+| | 链路 | 拉什么 / 从哪拉 | 谁负责代理 | 卡住的典型报错 |
+| --- | --- | --- | --- | --- |
+| ① | 拉基础镜像 | `python:3.11-slim`，约 50MB，来自 Docker Hub | **Docker 引擎**的代理设置 | `failed to resolve source metadata for docker.io/...`、`i/o timeout` |
+| ② | 容器内联网 | 装 tzdata（deb.debian.org）+ pip 装 pandas / streamlit 等约 590MB（PyPI） | **容器内进程**的网络 | `ReadTimeoutError`、`Connection to pypi.org timed out` |
+
+**① 给 Docker 引擎配代理**（Docker Desktop **默认不走 Windows 系统代理**，必须单独配）：
+
+Settings → Resources → Proxies → 勾 Manual proxy configuration，填
+`http://127.0.0.1:7890`（换成你自己的端口）→ **Apply & restart**（不重启不生效）。
+
+配完这样自检：
+
+```bash
+docker info | Select-String "Proxy"     # Windows PowerShell
+docker info | grep -i proxy             # macOS / Linux
+```
+
+看到 `HTTP Proxy: http://127.0.0.1:7890` 才算真的配上了。
+★ `docker --version` 有输出、甚至 `docker info` 能返回内容，**都不能证明代理生效** ——
+只有上面这条能看到 Proxy 行才算。这类「配了但没生效」在本项目里出现过三次
+（另有 TZ 缺 tzdata、Docker Desktop 代理键名被静默规范化），
+共同点是**不报错、静默退回默认行为**，只能靠看行为来发现。
+
+**② 给容器内的联网提速**，两种方式选一种：
+
+```bash
+# 方式 A（推荐）：pip 换国内镜像站，不必让 pip 也走代理
+docker build --build-arg PIP_INDEX_URL=https://pypi.tuna.tsinghua.edu.cn/simple -t gda .
+
+# 方式 B：把代理传进构建过程，同时管住 apt 和 pip 两条
+docker build \
+  --build-arg HTTP_PROXY=http://host.docker.internal:7890 \
+  --build-arg HTTPS_PROXY=http://host.docker.internal:7890 \
+  -t gda .
+```
+
+> `PIP_INDEX_URL` 默认就是官方 `https://pypi.org/simple`，所以**不传这个参数时
+> 构建行为与之前完全一样**。换源只改变「包从哪台机器下载」，装的是同一组 `==`
+> 钉死的版本 —— 不影响「重装出同一个环境」这一承诺。
+> 方式 B 里用 `host.docker.internal` 而不是 `127.0.0.1`：构建过程跑在容器里，
+> 容器里的 `127.0.0.1` 指的是容器自己，代理在宿主上，必须用这个特殊域名才能指到。
 
 > **诚实边界**：镜像里只有模拟数据（合成画像，「精简版」），真实 Steam 数据相关的
 > `dim_game` / `user_game` 两张表为空（它们只服务「游戏库 / 玩家画像」类分析，
@@ -306,7 +347,8 @@ Key 只能通过 `-e` 运行时注入（镜像里不含任何密钥，`.env` 已
 > `docker build` 成功，镜像 990MB；容器 `healthy`；宿主访问 `/_stcore/health`
 > 返回 `ok`、首页 200 / 7,260 字节；容器内时区为 CST、与宿主一致；
 > **容器内跑 `python -m pytest` → 743 passed**（干净 Linux + 精简版数据）。
-> 已知的环境前提：本机需能访问 Docker Hub（国内需给 Docker Desktop 配代理）。
+> 已知的环境前提：本机需能访问 Docker Hub 与 PyPI，国内网络请先看上面
+> 「国内网络下构建卡住怎么办」。
 > 详见《测试复盘记录》12.3。
 
 ### 8. 持续集成（CI · 每次推送自动验）

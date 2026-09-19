@@ -31,6 +31,8 @@
 # 【怎么用？】
 #   构建：docker build -t gda .
 #   运行：docker run --rm -p 8501:8501 -e DEEPSEEK_API_KEY=sk-xxx gda
+#   国内构建卡住时：pip 拉包换镜像站 + Docker Desktop 配代理，见 README
+#   「国内代理构建」小节（两条链路要分别解决，只解决一条仍会卡）。
 #   不带 Key 也能启动 —— 前端会显示「尚未配置 API Key」的引导文案（见 react_agent.py
 #   的 _NOT_CONFIGURED_HINT），界面照样能打开，方便先看产品形态。
 #
@@ -74,8 +76,15 @@ WORKDIR /app
 #   这一层，跳过几分钟的 pip install。如果把 COPY . . 放在前面，任何一次改代码
 #   都会让缓存失效、重装全部依赖 —— 这是写 Dockerfile 最常见的一个性能坑。
 # ---------------------------------------------------------------------------
+
+# pip 安装源，可用 --build-arg 覆盖（国内加速用，见 README「国内代理构建」小节）。
+# 默认仍是官方 PyPI，不改变默认的构建行为；PIP_INDEX_URL 只是给了
+# 「pip 拉包走镜像站」的退路。**换源只换拉包走哪，装的是同一组钉死 == 的版本，
+# 不影响「重装出同一个环境」这一承诺。**
+ARG PIP_INDEX_URL=https://pypi.org/simple
+
 COPY requirements.txt ./
-RUN pip install --no-cache-dir -r requirements.txt
+RUN pip install --no-cache-dir -i "$PIP_INDEX_URL" -r requirements.txt
 
 # ---------------------------------------------------------------------------
 # 第二层：拷代码并建库

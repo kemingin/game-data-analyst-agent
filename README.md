@@ -279,11 +279,29 @@ docker run --rm -p 8501:8501 -e DEEPSEEK_API_KEY=sk-xxx gda
 不带 Key 也能启动 —— 前端会显示「尚未配置 API Key」的引导文案，方便先看产品形态；
 Key 只能通过 `-e` 运行时注入（镜像里不含任何密钥，`.env` 已被 `.dockerignore` 排除）。
 
+> **跑之前先确认这两件事**（否则会卡在与代码无关的地方）：
+> 1. **引擎在跑，不只是 CLI 在**。`docker --version` 有输出只说明装了 CLI；
+>    引擎要等 Docker Desktop 启动后才可用，否则报
+>    `failed to connect to the docker API at npipe://...`。
+>    判断方法：`docker info` 能返回内容就算就绪。
+> 2. **能访问 Docker Hub**。`registry-1.docker.io` 在国内直连会超时，而
+>    **Docker Desktop 默认不走 Windows 系统代理** —— 需要在
+>    Settings → Resources → Proxies 里单独填（如 `http://127.0.0.1:7890`）。
+>    改完必须**重启 Docker Desktop** 才生效。
+
 > **诚实边界**：镜像里只有模拟数据（合成画像，「精简版」），真实 Steam 数据相关的
 > `dim_game` / `user_game` 两张表为空（它们只服务「游戏库 / 玩家画像」类分析，
 > 12 个运营指标一个都不依赖）。精简版与完整版的**指标口径与算法完全相同，但数值不同**，
 > 既往评测报告的数字都是在完整版上测的，别拿精简版的数值去对报告。
 > 需要完整数据时，把两个 CSV 放进 `data/raw/` 后在本机直接跑脚本即可。
+
+> **验证边界**：镜像已在 Windows + WSL2 后端真机验证通过（2026-09-19）：
+> `docker build` 成功，镜像 990MB；容器 `healthy`；宿主访问 `/_stcore/health`
+> 返回 `ok`、首页 200 / 7,260 字节；容器内时区为 CST、与宿主一致。
+> 已知的两处环境前提：① 本机需能访问 Docker Hub（国内需给 Docker Desktop 配代理）；
+> ② `requirements.txt` 用 `>=` 下限约束，pip 装的是当天最新版 —— 实测与开发环境
+> 同代（pandas 3.0.x / numpy 2.4.6 / streamlit 1.64.0），但**换一天构建可能装到更新的版本**。
+> 详见《测试复盘记录》12.3。
 
 ---
 

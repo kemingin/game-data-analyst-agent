@@ -256,6 +256,31 @@
                          **口径与算法完全相同，但数值不同、不可直接比较**；
                          这一点在 Dockerfile 注释、generate_mock_data 运行表头、
                          README 与文件清单说明里都写明了。
+                      ⑥ ★ 收口时补一轮「不需要 Docker 就能验」的预检，并查出
+                         一个真缺陷：**TZ=Asia/Shanghai 在 slim 镜像里是失效的** ——
+                         python:3.11-slim 基于 Debian slim，默认不带 tzdata，
+                         glibc 会**静默忽略 TZ、退回 UTC**（不报错、测试全绿），
+                         而 app.py 的导出时间 / 审计日志、dataset.py 的
+                         created_at、draft.py 的 updated_at 都用 datetime.now() /
+                         date.today()，差 8 小时足以让日期跨天。
+                         修法：显式 apt-get install tzdata（+ DEBIAN_FRONTEND=
+                         noninteractive 防安装脚本卡死）。
+                         预检另验了三件：CMD 四个 flag 被 Streamlit 1.64.0 全部
+                         接受、HEALTHCHECK 一行命令真返回 ok（退出码 0）、
+                         requirements 的 9 个依赖全有 cp311 wheel。
+                         ★ 教训记在 12.4 教训 D。
+                      ⑦ ★ 真机验证补完：装上 Docker 后跑通全链路 ——
+                         `docker build` exit 0，镜像 990MB（pip 层 589MB 是大头）；
+                         [7/7] 建库 1.3s / DB 30.0 MB / D1 留存 37.9%-49.7%-38.7%，
+                         **与模拟环境的预测完全一致**（合成画像用固定种子，
+                         不依赖环境）；`COPY . .` 仅 4.58MB，是 .dockerignore
+                         生效的硬证据；容器 HEALTHCHECK 6 秒判 healthy；
+                         宿主访问 /_stcore/health 返回 ok、首页 200 / 7,260 字节
+                         （与本机读数逐字节相同）；容器内时区为 CST，与宿主差 1 秒
+                         —— ⑥ 的 tzdata 修复经真机确认生效。
+                         ★ 新增教训 E（「一条命令跑起来」有前置条件：引擎要在跑、
+                           网络要能到 Docker Hub），并记下同族的「键名写错被静默
+                           丢弃」现象（ProxyHttpMode → 被规范化成 ProxyHTTPMode）。
                       ★ 新增第十二章记录本 Phase 的设计与决策；
                       ★ 本 Phase 的教训记在第十二章 12.4，未并入第七章踩坑清单。
   ------------------------------------------------------------------------
@@ -2318,7 +2343,10 @@
                                               HEALTHCHECK 用 Python 标准库发请求
                                               （容器里没有 curl）；CMD 必须
                                               --server.address=0.0.0.0，否则
-                                              -p 映射进来的请求到不了容器
+                                              -p 映射进来的请求到不了容器；
+                                              ★ 显式装 tzdata —— slim 镜像里
+                                              glibc 没有时区库，只设 TZ 会被
+                                              静默忽略、退回 UTC（见 12.4 教训 D）
   .dockerignore                               构建上下文排除。★ 第一职责是挡住
                                               .env（密钥不进镜像）；其次挡
                                               111MB 真实数据（镜像只取决于
@@ -2945,6 +2973,65 @@
 
     真实仓库侧：`pytest -q` → **743 passed in 8.22s**。
 
+  【补一轮「不需要 Docker 就能验」的预检（v1.14 收口时追加）】
+
+    上面那轮验证覆盖了「无数据时链路能不能跑通」，但 Dockerfile 本身
+    **一行都没被执行过**。所以又拆出三件不需要 Docker 就能验的事，先验掉：
+
+      · CMD 的四个 flag 是否被当前 Streamlit 接受？
+          本机 streamlit 1.64.0（与镜像里 `streamlit>=1.32` 装出来的同版本）
+          用**与 Dockerfile 逐字相同**的 flag 启动 → 正常起，无未知参数告警。
+      · HEALTHCHECK 的那行命令真能返回成功吗？
+          `python -c "import urllib.request; urllib.request.urlopen(...)"`
+          打到运行中的实例 → 返回 `ok`，urlopen 不抛错 → 退出码 0。
+          （这正是容器会被判 healthy 的判据。）
+      · 依赖在 slim 镜像里装得动吗？
+          requirements.txt 的 9 个依赖**全部有 cp311 的预编译 wheel**
+          （pandas / numpy / plotly / streamlit / openai / python-dotenv /
+          tabulate / pytest），不需要 gcc —— 印证了选 slim 变体是对的。
+
+    ★ 这三件之外，预检还查出一个**真缺陷**：TZ 在 slim 镜像里是失效的。
+      详见 12.4 教训 D —— 它也是本 Phase 唯一一处「改代码之外还改了 Dockerfile」
+      的修正。
+
+  【真机验证：装上 Docker 之后补完（2026-09-19）】
+
+    上面的模拟验证覆盖了「链路能不能跑通」，预检覆盖了「Dockerfile 的静态正确性」，
+    但**镜像本身没被构建过**。补上 Docker 环境后跑完，读数如下：
+
+      docker build -t gda .                     → exit 0，镜像 990MB
+      各层体积：pip install 589MB / 数据+建库 42.7MB / COPY . . 4.58MB
+      [7/7] 建库                                 → 1.3s，DB 30.0 MB
+      D1 留存                                    → A_版本前 37.9% / B_版本后 49.7%
+                                                   / C_更早 38.7%
+      EXPLAIN QUERY PLAN                         → SEARCH ... USING COVERING INDEX
+      docker run -d -p 8501:8501                 → HEALTHCHECK 6 秒判 healthy
+      宿主 GET /_stcore/health                    → 200，内容 `ok`
+      宿主 GET /                                  → 200，7,260 字节
+      容器内 date / datetime.now()                → CST，与宿主差 1 秒
+
+    ★ 三条值得记的读数：
+
+      ① **建库 1.3s、DB 30.0 MB、D1 三个版本的值，与模拟环境里的预测完全一致。**
+         这不是巧合，而是说明「无真实数据也能建库」这条路径**不依赖环境**：
+         合成画像用固定随机种子（config.RANDOM_SEED），在临时目录、在本机、
+         在容器里产出的是同一份数据。**可复现性不是声明出来的，是这样对出来的。**
+
+      ② **COPY . . 只有 4.58MB** —— 这是 .dockerignore 生效的硬证据。
+         若 Docker 真的无视 .gitignore 去拷 data/，这一层会是 100MB+。
+         「我以为 .dockerignore 挡住了」和「实测 4.58MB」，是两种可信度。
+
+      ③ **首页 7,260 字节与本机跑出来的读数逐字节相同。** 同一套 Streamlit
+         版本、同一份代码，容器内外表现一致 —— 这是「镜像没跑偏」最直接的证据。
+
+    ★ 顺带确认了一件预检**没法验**的事：镜像 990MB。其中 pip 层独占 589MB，
+      是绝对大头（pandas / numpy / streamlit / plotly / pyarrow 及其传递依赖）。
+      这一项只有真机能给，预检给不了。
+
+    ★ 也确认了预检**能验**的部分确实省了事：因为镜像里的 streamlit 就是本机
+      那个 1.64.0，预检阶段验过的「四个 flag 被接受」直接平移成立，真机阶段
+      不用再单独查一遍。
+
   【为什么 12 个运营指标不受影响？】
 
     这是「精简版能用」的**前提论证**，不是猜测：
@@ -3015,8 +3102,60 @@
       以及文件清单说明。**一个会造成误读的事实，要写在读者会停下来的每一处**，
       只写一处等于没写。
 
-  ★ 三条教训都偏「测试方法 / 交付边界」，故单独成节，未并入第七章踩坑清单。
-    若后续需要统一检索，可补编号 29 / 30 / 31 进第七章。
+  【教训 D：一个「看起来生效了」的配置，会因为缺底层数据文件被静默忽略】
+
+    `ENV TZ=Asia/Shanghai` 读起来完全正确 —— 变量名对、值对、是 Docker 的
+    标准写法。但它依赖 `/usr/share/zoneinfo` 这套时区数据库，而
+    python:3.11-slim 基于 Debian slim，**默认不带 tzdata**。
+    缺了它 glibc 不会报错，只是**忽略 TZ、静默退回 UTC**。
+
+    ★ 教训：**配置生效与否，取决于它依赖的资源在不在，而不是写法对不对。**
+      这类缺陷最难发现的地方在于：不报错、不崩溃、测试全绿，
+      只是结果悄悄偏了 8 小时 —— 而 8 小时恰好够让「导出时间」跨过一天，
+      在演示时被当成「日期算错了」。
+      修法是显式 `apt-get install tzdata`（纯数据包约 5MB），
+      并带 `DEBIAN_FRONTEND=noninteractive` 防止安装脚本等时区输入卡死。
+
+    ★ 顺带记一条更通用的做法：**在拿到真机之前，先穷举「不需要真机就能验的部分」**。
+      本次就拆出三件（flag 是否被 Streamlit 接受 / 健康检查命令能否返回 0 /
+      依赖有没有 cp311 wheel），它们本来会被一起推给「等装了 Docker 再说」。
+      而正是顺着「slim 镜像里 glibc 有没有时区库」这一问，才查出 TZ 的问题。
+      **把「等环境」的时间用来做静态预检不是拖延，是把真机时间留给只有真机才能验的事。**
+      —— 反过来说，这条也划清了边界：预检能验的是「配置与代码的静态正确性」，
+      **镜像到底能不能 build 出来、层缓存有没有按预期命中，仍然只能等真机。**
+      （真机验证已于 2026-09-19 补完，读数见 12.3：容器内 `date` 返回 CST、
+      `datetime.now()` 与宿主差 1 秒 —— 修复生效，8 小时偏移不存在。）
+
+  【教训 E：「一条命令跑起来」这句话，有前置条件】
+
+    Dockerfile 的注释里写着「build 完就能 run，不需要使用者碰数据」，
+    README 里写的是 `docker build -t gda .`。真机上第一次跑，**这两句都没兑现** ——
+    卡在两个和代码完全无关的地方：
+
+      ① Docker Desktop 装完**从没启动过**。`docker --version` 有输出（CLI 在），
+         但引擎要等 Desktop 起来才创建 `\\.\pipe\docker_engine`，
+         于是报 `failed to connect to the docker API at npipe://...`。
+         **「CLI 能跑」不等于「引擎在跑」** —— 这是两件事。
+      ② Docker Hub 连不上。`registry-1.docker.io` 直连超时（被墙），
+         而 **Docker Desktop 默认不走 Windows 系统代理**，
+         需要在 Settings → Resources → Proxies 单独配（或改
+         `%APPDATA%\Docker\settings-store.json`）。
+
+    ★ 教训：**交付文档里的每一条命令，都隐含着一串环境前提。**
+      写 `docker build -t gda .` 的时候，脑子里默认了「装了 Docker 且引擎在跑
+      且能访问 Docker Hub」—— 这三条一条都没写出来。
+      对一份「拿给别人看」的项目来说，**读者卡在哪一步，那一步就是文档的缺口**。
+
+    ★ 补记一条：这次配代理时还撞见一次「静默忽略」的同族现象 ——
+      我在 settings-store.json 里写的键名是 `ProxyHttpMode` / `OverrideProxyHttp`
+      （小写 ttp），Docker Desktop 启动后把它们规范化成了全大写 `ProxyHTTPMode` /
+      `OverrideProxyHTTP`。**键名写错它不会报错，只会静默丢弃** ——
+      和教训 D 的 TZ 是同一类：配置读没读到，不取决于你怎么写，
+      取决于对方认不认。**唯一的确认方式是看行为有没有变**（这里是拉取从
+      超时变成成功），而不是看配置文件里有没有那一行。
+
+  ★ 五条教训都偏「测试方法 / 交付边界」，故单独成节，未并入第七章踩坑清单。
+    若后续需要统一检索，可补编号 29 / 30 / 31 / 32 / 33 进第七章。
 
 
 ================================================================================

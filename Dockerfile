@@ -46,9 +46,24 @@ FROM python:3.11-slim
 # PYTHONUNBUFFERED：让日志实时输出，否则 docker logs 要等缓冲满了才看得到 ——
 #   排查「容器起来了但界面打不开」这类问题时，实时日志是唯一的线索。
 # PYTHONDONTWRITEBYTECODE：容器内不需要 .pyc，少写一层垃圾。
+# TZ=Asia/Shanghai：让 app.py 里 datetime.now() / date.today()（导出时间、审计
+#   日志、created_at 缓存键）按北京时间计算，而不是 UTC —— 差 8 小时会在
+#   演示时把「导出报告的时间戳」显示成后一天。
+#   ★ 必须有下面那个 apt-get install tzdata：python:3.11-slim 基于 Debian slim，
+#     glibc 默认没有 /usr/share/zoneinfo，只设 TZ 会被忽略、静默退回 UTC。
+#     tzdata 是纯数据包（约 5MB），装完 TZ 才真正生效。
 ENV PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1 \
     TZ=Asia/Shanghai
+
+# 装 tzdata（TZ 要生效的前提，见上方 ENV 注释）。
+# 单独一层且排在依赖层之前：tzdata 的安装与 requirements.txt 无关，
+# 放前面可以让「改依赖重装」时不必连带重跑 apt。
+# DEBIAN_FRONTEND=noninteractive：tzdata 的安装脚本会问时区，构建环境没有
+#   终端，不显式声明非交互时可能卡在等输入上 —— 一行代价换掉一类构建卡死。
+RUN apt-get update \
+    && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends tzdata \
+    && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
 

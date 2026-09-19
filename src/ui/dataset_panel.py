@@ -53,6 +53,7 @@ import streamlit as st
 from src import config as cfg
 from src.data.dataset import Dataset, DatasetStore
 from src.ui.overview import load_table_preview
+from src.ui.scheme_builder_panel import render_scheme_builder
 
 # 「待切换的数据集」一次性标志（上传成功后置位，下一次运行消费掉）。
 # 【为什么用一次性标志，而不是维护一个「当前数据集」的副本？】
@@ -86,6 +87,7 @@ _DYNAMIC_WIDGET_PREFIXES: tuple[str, ...] = (
     "confirm_",   # 「记录人工确认」按钮（key = confirm_{turn}）
     "export_",    # 导出按钮（key = export_{turn}）
     "example_",   # 空态示例问题按钮（key = example_{index}）
+    "scheme_",    # 指标方案搭建面板的全部状态（草稿、勾选、手工指标）
 )
 
 
@@ -197,12 +199,12 @@ def _dataset_label(dataset: Dataset) -> str:
 def _render_compatibility(store: DatasetStore, dataset: Dataset) -> None:
     """方案兼容性提示条。
 
-    【为什么地基阶段就要做这个提示？】
-      本轮不做「为新数据集生成指标方案」，所以上传的数据集只能沿用已有方案。
-      若该方案的指标模板依赖的表在新库里不存在，每次提问都会以
-      「引用了未授权的表」失败 —— 用户会以为系统坏了。
-      与其让用户撞墙，不如在选择数据集时就把这件事说清楚。
-      这是「诚实失败」，不是「假装能用」。
+    【为什么这个提示是必需的？】
+      上传的数据集默认只能沿用已有方案，而内置方案的 12 个指标全部依赖
+      内置的 9 张表 —— 新库里一张都没有，每次提问都会以
+      「引用了未授权的表」失败。若只报错不指出路，用户会以为系统坏了。
+      所以这里不仅要说清「不匹配」，还要指向下面的「指标方案搭建」面板 ——
+      这是「诚实失败」的完整形态：说清现状 + 给出下一步。
     """
     info = _compatibility(dataset.dataset_id, dataset.cache_key())
 
@@ -221,6 +223,13 @@ def _render_compatibility(store: DatasetStore, dataset: Dataset) -> None:
             st.caption(
                 "指标方案的 SQL 模板里写死了来源表名，表不存在时查询会被白名单拦下。"
             )
+    if not info.get("usable_metrics"):
+        st.info(
+            "本数据集一个可用指标都没有 —— 请使用下方的 **🛠 指标方案搭建**："
+            "系统会按表结构生成候选指标草稿，你复审确认后即可启用；"
+            "识别不到的指标也可以手工搭建。",
+            icon="🧭",
+        )
 
 
 # ===========================================================================
@@ -472,6 +481,15 @@ def render_dataset_picker(store: DatasetStore) -> str:
 
         st.divider()
         _render_upload_form(store)
+
+    # 指标方案搭建：只对上传数据集开放。
+    # 【为什么内置数据集不给？】它指向 src/metrics/metrics_registry.json ——
+    #   那是**受版本管理、经评审的源码资产**，绝不该被界面上的草稿生成覆盖。
+    #   上传数据集的方案是运行时产物（写在 data/schemes/，不入库），
+    #   所以可以放心让用户自助重建。
+    if by_id[selected].source == "upload":
+        with st.expander("🛠 指标方案搭建", expanded=False):
+            render_scheme_builder(by_id[selected], store)
 
     _render_preview(by_id[selected])
     return selected

@@ -214,6 +214,14 @@ LLM_TOOL_MAX_ROWS: int = 60
 DATASETS_DIR: Path = DATA_DIR / "datasets"          # 每个数据集一个子目录
 DATASET_INDEX_PATH: Path = DATASETS_DIR / "index.json"
 
+# 指标方案资产目录：每个方案一个子目录，内含 metrics_registry.json。
+# 【为什么方案要有自己的目录，而不是全部塞在 src/metrics/ 下？】
+#   因为「内置方案」是**受版本管理的源码资产**（进 Git、有人评审），
+#   而「用户确认的草稿方案」是**运行时产物**（不进 Git、随时可删）。
+#   两者混在一个目录里，就再也分不清哪份 JSON 该被审、哪份可以删 ——
+#   而这正是「数据/口径分离」之后必须守住的那条边界。
+SCHEMES_DIR: Path = DATA_DIR / "schemes"
+
 # 内置数据集 / 内置指标方案的 ID。
 # 【为什么内置数据集不搬文件、只做「登记」？】
 #   现有 data/game_analytics.db（106MB）与 src/metrics/metrics_registry.json

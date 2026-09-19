@@ -13,6 +13,13 @@ data/*.db-shm
 # ensure_builtin() 会自动重建，任何克隆都能自愈（详见 src/data/dataset.py）。
 data/datasets/
 
+# 指标方案目录：用户经「半自动指标草稿闭环」确认落盘的方案（<id>/metrics_registry.json）。
+# 【为什么它也属于「运行时产物」？】内置方案 src/metrics/metrics_registry.json 是
+#   受版本管理、经指标委员会评审的**源码资产**；而这里的方案由上传数据集的表结构
+#   推导 + 人工勾选确认产生，因人、因数据而异，没有跨机器复现的意义。
+#   两者混进同一个目录后，就再也分不清哪份 JSON 该被评审、哪份可以随手删。
+data/schemes/
+
 # ---- 环境与密钥 ----
 .env
 .venv/

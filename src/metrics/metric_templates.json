@@ -1,0 +1,162 @@
+{
+  "meta": {
+    "asset_name": "指标草稿模板资产",
+    "asset_version": "1.0",
+    "updated_at": "2026-09-19",
+    "owner": "数据与增长部 · 指标委员会",
+    "description": "从数据集表结构自动生成「候选指标草稿」用的模板资产。每份模板按『语义角色』占位符（{date} / {user_id} / {active_flag}）书写，生成草稿时替换成真实表名与列名，运行时再由程序填充 :参数。同一 metric_id 可有多份模板（适配不同表形态），靠 priority 择优。草稿必须经人工复审确认后才落盘为指标方案。",
+    "placeholder_rule": "{xxx} 是语义角色占位符（由 schema_roles.py 推断后替换），:xxx 是运行时参数占位符（由 SQLGenerator 填充），两者不可混用。source_tables 不在本资产中声明 —— 它由草稿生成时按命中的表填入。"
+  },
+  "templates": [
+    {
+      "template_id": "dau_from_snapshot",
+      "metric_id": "dau",
+      "priority": 10,
+      "required_roles": ["date", "active_flag"],
+      "metric_name": "日活跃用户数（DAU）",
+      "aliases": ["DAU", "日活", "日活跃用户数", "日活跃用户", "每天活跃人数", "日活趋势"],
+      "category": "活跃",
+      "business_definition": "统计区间内，每一天发生登录行为的去重用户数。以 {active_flag}=1 作为当日活跃判据，与「当天存在登录事件」等价。",
+      "unit": "人",
+      "good_direction": "up",
+      "dimensions": ["date"],
+      "params": [
+        { "name": "start_date", "type": "date", "required": false, "default": "@data_end-6", "label": "开始日期", "description": "统计起始日期（含）。默认最近 7 天。" },
+        { "name": "end_date", "type": "date", "required": false, "default": "@data_end", "label": "结束日期", "description": "统计截止日期（含）。默认数据截止日。" }
+      ],
+      "sql_template": "SELECT {date} AS date,\n       SUM({active_flag}) AS dau\nFROM {table}\nWHERE {date} BETWEEN :start_date AND :end_date\nGROUP BY {date}\nORDER BY {date}",
+      "output_columns": [
+        { "name": "date", "description": "日期" },
+        { "name": "dau", "description": "当日活跃用户数" }
+      ],
+      "notes": "快照版：表里已有活跃标志列，SUM 即计数（标志列只有 0/1 两个取值）。",
+      "owner": "数据与增长部 · 数据分析师",
+      "updated_at": "2026-09-19"
+    },
+    {
+      "template_id": "dau_from_events",
+      "metric_id": "dau",
+      "priority": 20,
+      "required_roles": ["date", "user_id"],
+      "metric_name": "日活跃用户数（DAU）",
+      "aliases": ["DAU", "日活", "日活跃用户数", "日活跃用户", "每天活跃人数"],
+      "category": "活跃",
+      "business_definition": "统计区间内，每天发生任意事件的去重用户数。基于事件流水表，口径为 COUNT(DISTINCT {user_id})。",
+      "unit": "人",
+      "good_direction": "up",
+      "dimensions": ["date"],
+      "params": [
+        { "name": "start_date", "type": "date", "required": false, "default": "@data_end-6", "label": "开始日期", "description": "统计起始日期（含）。默认最近 7 天。" },
+        { "name": "end_date", "type": "date", "required": false, "default": "@data_end", "label": "结束日期", "description": "统计截止日期（含）。默认数据截止日。" }
+      ],
+      "sql_template": "SELECT {date} AS date,\n       COUNT(DISTINCT {user_id}) AS dau\nFROM {table}\nWHERE {date} BETWEEN :start_date AND :end_date\nGROUP BY {date}\nORDER BY {date}",
+      "output_columns": [
+        { "name": "date", "description": "日期" },
+        { "name": "dau", "description": "当日活跃用户数" }
+      ],
+      "notes": "事件版：表里只有用户列与时间列，活跃口径退化为「当天有事件」。",
+      "owner": "数据与增长部 · 数据分析师",
+      "updated_at": "2026-09-19"
+    },
+    {
+      "template_id": "mau_from_snapshot",
+      "metric_id": "mau",
+      "priority": 10,
+      "required_roles": ["date", "user_id", "active_flag"],
+      "metric_name": "月活跃用户数（MAU，滚动 30 天）",
+      "aliases": ["MAU", "月活", "月活跃用户数", "近30天活跃用户数"],
+      "category": "活跃",
+      "business_definition": "以统计截止日为终点、向前滚动 30 天窗口内的去重活跃用户数。窗口为 (end_date-30, end_date]。",
+      "unit": "人",
+      "good_direction": "up",
+      "dimensions": ["date"],
+      "params": [
+        { "name": "end_date", "type": "date", "required": false, "default": "@data_end", "label": "统计截止日", "description": "滚动窗口的终点（含）。默认数据截止日。" }
+      ],
+      "sql_template": "SELECT COUNT(DISTINCT {user_id}) AS mau\nFROM {table}\nWHERE {active_flag} = 1\n  AND {date} > date(:end_date, '-30 day')\n  AND {date} <= :end_date",
+      "output_columns": [
+        { "name": "mau", "description": "窗口内去重活跃用户数" }
+      ],
+      "notes": "需同时具备活跃标志列与用户列。date(x, '-30 day') 是 SQLite 的日期运算函数。",
+      "owner": "数据与增长部 · 数据分析师",
+      "updated_at": "2026-09-19"
+    },
+    {
+      "template_id": "new_user_count_from_register",
+      "metric_id": "new_user_count",
+      "priority": 10,
+      "required_roles": ["register_date"],
+      "metric_name": "新增用户数（新用户注册数）",
+      "aliases": ["新增用户", "新用户数", "注册用户数", "新增注册", "每日新增"],
+      "category": "增长",
+      "business_definition": "统计区间内，每天新增注册的用户数。按注册日期聚合。",
+      "unit": "人",
+      "good_direction": "up",
+      "dimensions": ["date"],
+      "params": [
+        { "name": "start_date", "type": "date", "required": false, "default": "@data_end-6", "label": "开始日期", "description": "统计起始日期（含）。默认最近 7 天。" },
+        { "name": "end_date", "type": "date", "required": false, "default": "@data_end", "label": "结束日期", "description": "统计截止日期（含）。默认数据截止日。" }
+      ],
+      "sql_template": "SELECT {register_date} AS date,\n       COUNT(*) AS new_users\nFROM {table}\nWHERE {register_date} BETWEEN :start_date AND :end_date\nGROUP BY {register_date}\nORDER BY {register_date}",
+      "output_columns": [
+        { "name": "date", "description": "注册日期" },
+        { "name": "new_users", "description": "当日新增用户数" }
+      ],
+      "notes": "只需识别出注册日期列即可产出。",
+      "owner": "数据与增长部 · 数据分析师",
+      "updated_at": "2026-09-19"
+    },
+    {
+      "template_id": "retention_from_snapshot",
+      "metric_id": "retention_rate",
+      "priority": 10,
+      "required_roles": ["register_date", "date", "user_id", "active_flag"],
+      "metric_name": "留存率（D1 / D7 / D30）",
+      "aliases": ["留存率", "留存", "次日留存", "次日留存率", "次留", "7日留存", "7日留存率", "30日留存", "D1", "D7", "D30"],
+      "category": "留存",
+      "business_definition": "某批新增用户中，在注册后第 N 天仍然活跃的用户占比。分母必须剔除「注册日 + N 天 > 数据截止日」的用户，否则会人为压低留存率。",
+      "unit": "%",
+      "good_direction": "up",
+      "dimensions": ["date"],
+      "params": [
+        { "name": "day_n", "type": "int", "required": false, "default": 1, "enum": [1, 7, 30], "label": "留存天数 N", "description": "1=次日留存(D1)，7=7日留存(D7)，30=30日留存(D30)。" },
+        { "name": "cohort_start", "type": "date", "required": false, "default": "@data_end-6-:day_n", "label": "新增用户起始日", "description": "按注册日期圈定用户批次（含）。默认「数据截止日往前 6+N 天」，保证这批用户的第 N 天能被观测到。" },
+        { "name": "cohort_end", "type": "date", "required": false, "default": "@data_end-:day_n", "label": "新增用户截止日", "description": "按注册日期圈定用户批次（含）。默认「数据截止日往前 N 天」。" }
+      ],
+      "sql_template": "WITH cohort AS (\n  SELECT {user_id} AS uid,\n         MIN({register_date}) AS reg\n  FROM {table}\n  WHERE {register_date} BETWEEN :cohort_start AND :cohort_end\n  GROUP BY {user_id}\n),\njoined AS (\n  SELECT c.uid,\n         b.{active_flag} AS act\n  FROM cohort c\n  LEFT JOIN {table} b\n    ON b.{user_id} = c.uid\n   AND b.{date} = date(c.reg, '+' || CAST(:day_n AS TEXT) || ' day')\n)\nSELECT COUNT(*) AS cohort_size,\n       COALESCE(SUM(act), 0) AS retained_users,\n       ROUND(100.0 * COALESCE(SUM(act), 0) / COUNT(*), 2) AS retention_rate_pct\nFROM joined",
+      "output_columns": [
+        { "name": "cohort_size", "description": "该批新增用户数（留存分母）" },
+        { "name": "retained_users", "description": "第 N 天仍活跃的人数（留存分子）" },
+        { "name": "retention_rate_pct", "description": "留存率百分比" }
+      ],
+      "notes": "适用于「同一张表既含注册日期又含每日活跃」的快照形态。LEFT JOIN + COALESCE 兜底「第 N 天无记录」的用户，保证分母不缩水。",
+      "owner": "数据与增长部 · 数据分析师",
+      "updated_at": "2026-09-19"
+    },
+    {
+      "template_id": "revenue_total_from_revenue_date",
+      "metric_id": "revenue_total",
+      "priority": 10,
+      "required_roles": ["revenue", "date"],
+      "metric_name": "总流水（总收入）",
+      "aliases": ["流水", "收入", "充值", "营收", "总收入"],
+      "category": "商业化",
+      "business_definition": "统计区间内每天的收入合计。",
+      "unit": "元",
+      "good_direction": "up",
+      "dimensions": ["date"],
+      "params": [
+        { "name": "start_date", "type": "date", "required": false, "default": "@data_end-6", "label": "开始日期", "description": "统计起始日期（含）。默认最近 7 天。" },
+        { "name": "end_date", "type": "date", "required": false, "default": "@data_end", "label": "结束日期", "description": "统计截止日期（含）。默认数据截止日。" }
+      ],
+      "sql_template": "SELECT {date} AS date,\n       SUM({revenue}) AS revenue\nFROM {table}\nWHERE {date} BETWEEN :start_date AND :end_date\nGROUP BY {date}\nORDER BY {date}",
+      "output_columns": [
+        { "name": "date", "description": "日期" },
+        { "name": "revenue", "description": "当日收入合计" }
+      ],
+      "notes": "需识别出金额列。",
+      "owner": "数据与增长部 · 数据分析师",
+      "updated_at": "2026-09-19"
+    }
+  ]
+}

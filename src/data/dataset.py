@@ -33,7 +33,7 @@ import hashlib
 import json
 import os
 import re
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import date, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -598,6 +598,32 @@ class DatasetStore:
         self._save()
         return scheme
 
+    def set_scheme(self, dataset_id: str, scheme_id: str) -> Dataset:
+        """把数据集指向另一套指标方案（解耦的直接收益：改一行引用即可）。
+
+        【为什么必须先校验方案存在？】
+          因为 scheme_id 只是一个字符串引用，写错不会有任何报错 ——
+          直到某次提问时 build_context() 才抛 KeyError「指标方案不存在」。
+          那时用户已经在看一个「看起来正常」的数据集了，报错位置离原因很远。
+          在这里校验，等于把「引用完整性」收在写入点上。
+
+        【为什么用 dataclasses.replace 而不是重新构造 Dataset？】
+          replace 只改指定字段、其余原样复制，因此**不可能漏字段**。
+          手写构造（像 refresh_tables 那样逐个字段抄）在 Dataset 加字段时
+          会静默丢掉新字段 —— 这类 bug 不会报错，只会让某个功能莫名失效。
+        """
+        dataset = self.get(dataset_id)
+        if scheme_id not in self._schemes:
+            raise KeyError(
+                f"指标方案不存在：{scheme_id}；"
+                f"可用方案：{', '.join(s.scheme_id for s in self.list_schemes()) or '（无）'}"
+            )
+
+        updated = replace(dataset, scheme_id=scheme_id)
+        self._datasets[dataset_id] = updated
+        self._save()
+        return updated
+
     # ================= 内置资产自愈 =================
 
     def ensure_builtin(self) -> Dataset:
@@ -641,12 +667,13 @@ class DatasetStore:
 
         返回 {"ok", "missing_tables", "usable_metrics", "total_metrics", "message"}
 
-        【为什么地基阶段就要做这个检查？】
-          因为本轮不做「从数据集生成新方案」，上传的数据集必然指向内置方案，
-          而内置方案的 12 个指标全部依赖那 9 张表 —— 上传的库里一张都没有，
-          每一次提问都会以「SQL 引用了未授权的表」失败。
-          与其让用户以为系统坏了，不如在选择数据集时就把这件事说清楚。
-          这是「诚实失败」，而不是「假装能用」。
+        【为什么这个检查是必需的？】
+          上传的数据集默认只能沿用已有方案，而内置方案的 12 个指标全部依赖
+          内置的 9 张表 —— 新库里一张都没有，每一次提问都会以
+          「SQL 引用了未授权的表」失败。
+          与其让用户以为系统坏了，不如在选择数据集时就把这件事说清楚，
+          并指向「指标方案搭建」面板（那里可以按表结构生成草稿、人工确认后启用）。
+          这是「诚实失败」的完整形态：说清现状 + 给出下一步，而不是「假装能用」。
 
         【为什么这里用方法内延迟 import MetricRegistry？】
           本模块的依赖边界是「数据层不依赖指标语义层」，所以模块级不能 import。
@@ -698,8 +725,9 @@ class DatasetStore:
             message = (
                 f"方案依赖的 {len(missing)} 张表在本数据集中不存在："
                 f"{', '.join(missing[:5])}{'…' if len(missing) > 5 else ''}。"
-                f"本轮暂不支持为新数据集自动生成指标方案，"
-                f"因此提问会以「引用了未授权的表」失败。"
+                f"可在「🛠 指标方案搭建」面板为本数据集生成专属指标草稿，"
+                f"或在重新上传时改选一个与表结构匹配的已有方案；"
+                f"在此之前，提问会以「引用了未授权的表」失败。"
             )
 
         return {

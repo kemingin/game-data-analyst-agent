@@ -315,6 +315,87 @@ def test_cache_key_changes_with_scheme_and_created_at(tmp_path):
 
 
 # ---------------------------------------------------------------------------
+# 三·补、切换数据集指向的方案（Phase 8 · b4）
+# ---------------------------------------------------------------------------
+
+def test_set_scheme_switches_reference(tmp_path):
+    """正面：set_scheme 改掉引用，其余字段原样保留。
+
+    【为什么必须断言「其余字段原样保留」？】因为它用 dataclasses.replace 实现，
+      这个断言的真正目的是证明「没有漏字段」—— 一旦有人把实现改回手写构造，
+      这里会立刻变红，而不是等到某个字段（比如 tables）被静默清空。
+    """
+    store = _store(tmp_path, scheme_id="s1")
+    store.register_scheme(
+        display_name="草稿方案",
+        registry_path=REAL_REGISTRY,
+        scheme_id="s2",
+    )
+    base = _create(store, dataset_id="sw", scheme_id="s1",
+                   tables=(DatasetTable(name="t1"),))
+
+    updated = store.set_scheme("sw", "s2")
+
+    assert updated.scheme_id == "s2"
+    assert updated.dataset_id == base.dataset_id
+    assert updated.display_name == base.display_name
+    assert updated.tables == base.tables
+    assert updated.data_start == base.data_start
+    assert updated.cache_key() != base.cache_key()
+
+
+def test_set_scheme_is_persisted(tmp_path):
+    """切换必须落盘：换一个 store 实例重新读索引，指向仍然是新方案。
+
+    【为什么单独测这条？】只改内存不落盘的话，界面上切换成功、
+      重启应用后又悄悄切回旧方案 —— 属于最难排查的那类「配置不生效」。
+    """
+    store = _store(tmp_path, scheme_id="s1")
+    store.register_scheme(
+        display_name="草稿方案", registry_path=REAL_REGISTRY, scheme_id="s2"
+    )
+    _create(store, dataset_id="sw", scheme_id="s1")
+    store.set_scheme("sw", "s2")
+
+    reopened = DatasetStore(root=tmp_path / "datasets", auto_builtin=False)
+    assert reopened.get("sw").scheme_id == "s2"
+
+
+def test_set_scheme_rejects_unknown_scheme(tmp_path):
+    """反面：指向不存在的方案必须当场报错，而不是留到查询时才炸。
+
+    若放行，错误会在 build_context() 里以「指标方案不存在」出现 ——
+    那时用户已经在看一个「看起来正常」的数据集，报错位置离原因很远。
+    """
+    store = _store(tmp_path, scheme_id="s1")
+    _create(store, dataset_id="sw", scheme_id="s1")
+    with pytest.raises(KeyError, match="指标方案不存在"):
+        store.set_scheme("sw", "nope")
+
+
+def test_set_scheme_rejects_unknown_dataset(tmp_path):
+    """反面：数据集不存在时同样当场报错。"""
+    store = _store(tmp_path, scheme_id="s1")
+    with pytest.raises(KeyError, match="数据集不存在"):
+        store.set_scheme("nope", "s1")
+
+
+def test_set_scheme_does_not_touch_other_datasets(tmp_path):
+    """反面（隔离性）：切换一个数据集不能影响另一个的指向。"""
+    store = _store(tmp_path, scheme_id="s1")
+    store.register_scheme(
+        display_name="草稿方案", registry_path=REAL_REGISTRY, scheme_id="s2"
+    )
+    _create(store, dataset_id="a", scheme_id="s1")
+    _create(store, dataset_id="b", scheme_id="s1")
+
+    store.set_scheme("a", "s2")
+
+    assert store.get("a").scheme_id == "s2"
+    assert store.get("b").scheme_id == "s1"
+
+
+# ---------------------------------------------------------------------------
 # 四、方案兼容性检查
 # ---------------------------------------------------------------------------
 

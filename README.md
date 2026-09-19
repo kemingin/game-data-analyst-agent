@@ -179,6 +179,7 @@ Game Data Analyst Agent/
 ├── tests/                          # 400+ 个测试函数 / pytest 收集 749 条
 ├── docs/                           # 文档与评测产物（按「谁读」分四层，见下表）
 │   ├── 01_项目文档/                 # 第一次接触项目时读
+│   │   ├── 产品说明文档_PRD.md       # ★ 产品视角：给谁用 / 凭什么信 / 值不值
 │   │   ├── data_dictionary.md      # 数据字典
 │   │   ├── 开发复盘记录_Phase1-3.txt # ★ 全流程复盘：设计决策 + 缺陷 + 追问答法
 │   │   └── 文件清单说明.txt          # 逐文件说明（作品集索引）
@@ -509,9 +510,10 @@ Phase 6 基线（31 条用例 v1.1，真实调用大模型）：
 
 | 文档 | 说明 |
 | --- | --- |
+| [产品说明文档（PRD）](file:///e:/TraeCode/Work/JAVAWork/Game%20Data%20Analyst%20Agent/docs/01_项目文档/产品说明文档_PRD.md) | ★ 产品视角：目标用户与场景、问题定义、信任设计、评测证据、已知缺口 |
 | [开发复盘记录](file:///e:/TraeCode/Work/JAVAWork/Game%20Data%20Analyst%20Agent/docs/01_项目文档/开发复盘记录_Phase1-3.txt) | 全流程复盘：每个设计决策的取舍、踩过的坑、常见追问的答法 |
 | [测试复盘记录](file:///e:/TraeCode/Work/JAVAWork/Game%20Data%20Analyst%20Agent/docs/02_测试复盘/测试复盘记录.txt) | 测试体系全档案：三层的分工、幻觉两个口径、评测台自身五次出错、常见追问 |
-| [文件清单说明](file:///e:/TraeCode/Work/JAVAWork/Game%20Data%20Analyst%20Agent/docs/01_项目文档/文件清单说明.txt) | 逐文件说明：117 个文件各是干什么的、在架构哪个位置、设计要点是什么 |
+| [文件清单说明](file:///e:/TraeCode/Work/JAVAWork/Game%20Data%20Analyst%20Agent/docs/01_项目文档/文件清单说明.txt) | 逐文件说明：119 个文件各是干什么的、在架构哪个位置、设计要点是什么 |
 | [数据字典](file:///e:/TraeCode/Work/JAVAWork/Game%20Data%20Analyst%20Agent/docs/01_项目文档/data_dictionary.md) | 9 张表的字段说明与业务含义 |
 | [评测报告](file:///e:/TraeCode/Work/JAVAWork/Game%20Data%20Analyst%20Agent/docs/03_评测报告/评测报告_Phase6.txt) | 端到端 31 条用例的逐例明细与总览 |
 | [专项报告](file:///e:/TraeCode/Work/JAVAWork/Game%20Data%20Analyst%20Agent/docs/03_评测报告/工具调用测试报告_Phase1.txt) | 5 个专项的原始留档（工具 / 性能缓存 / 幻觉质量 / 鲁棒性边界） |
@@ -520,6 +522,7 @@ Phase 6 基线（31 条用例 v1.1，真实调用大模型）：
 > **02_测试复盘** 讲「踩过哪些坑、为什么这么设计」，**03_评测报告** 是给人读的结论（txt），
 > **04_评测原始数据** 是给程序/Excel 复核用的证据（csv/json）。
 > 完整目录树见第四节。
+> 若只想快速判断「这个产品值不值得看」，先读 **产品说明文档（PRD）**。
 
 ---
 

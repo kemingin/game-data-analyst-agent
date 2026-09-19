@@ -135,7 +135,11 @@ def verify(conn: sqlite3.Connection) -> None:
     for t in tables:
         n = conn.execute(f"SELECT COUNT(*) FROM {t}").fetchone()[0]
         total += n
-        print(f"    {t:<24s} {n:>10,}")
+        # 表由 schema.sql 统一建好，所以「没导数据」表现出来是 0 行而不是缺表。
+        # 明确标注一句，免得读报告的人把「精简版」误判成「建库失败」。
+        mark = "  ← 未导入（缺真实 Steam 数据，见 [2/5] 说明）" \
+            if t in ("dim_game", "user_game") and n == 0 else ""
+        print(f"    {t:<24s} {n:>10,}{mark}")
     print(f"    {'合计':<24s} {total:>10,}")
 
     # ---------- 2. 时间范围 ----------
@@ -270,12 +274,31 @@ def main() -> None:
     conn = create_connection()
 
     print("\n[2/5] 导入数据")
-    # --- 真实数据 ---
-    meta = load_game_meta()
-    load_table(conn, meta, "dim_game", "<- 真实 Steam 游戏元数据")
+    # --- 真实数据（可选）---
+    # 【为什么真实数据缺失时要能跳过，而不是直接报错？】
+    #   data/raw/ 下的两个 Steam CSV 共 111MB，属于「体积大、版权归属外部」的
+    #   原始数据，被 .gitignore 排除在仓库之外。如果这里硬性要求它们存在，
+    #   那么**任何从 GitHub 克隆下来的仓库都建不出库** —— 别人只能看代码、
+    #   跑不起来，这对一个要给别人用的项目是致命的。
+    #   所以改成：有真实数据就导入（本地开发/完整版），没有就跳过并说清楚
+    #   跳过了什么、会影响什么。Docker 镜像正是靠这条路径做到自给自足的。
+    #
+    #   ★ 跳过是安全的，因为 12 个运营指标只依赖 dim_user / dim_version /
+    #     game_event_log / user_daily_snapshot 四张表，不碰这两张 Steam 表。
+    #     它们服务于「游戏库 / 玩家画像」类分析，属于增强项而非必需项。
+    if cfg.RAW_GAME_META.exists() and cfg.RAW_USER_GAME.exists():
+        meta = load_game_meta()
+        load_table(conn, meta, "dim_game", "<- 真实 Steam 游戏元数据")
 
-    ug = load_user_game(dedup=True)
-    load_table(conn, ug, "user_game", "<- 真实用户游玩明细（已按 user_id+appid 去重）")
+        ug = load_user_game(dedup=True)
+        load_table(conn, ug, "user_game", "<- 真实用户游玩明细（已按 user_id+appid 去重）")
+    else:
+        print("  · 未找到真实 Steam 原始数据，跳过 dim_game / user_game 两张表")
+        print(f"    期望路径：{cfg.RAW_GAME_META.name} / {cfg.RAW_USER_GAME.name}"
+              f"（目录 {cfg.RAW_DIR}）")
+        print("    影响范围：仅「游戏库 / 玩家画像」类分析无数据；")
+        print("              12 个运营指标不受影响（它们不依赖这两张表）。")
+        print("    如需完整数据：把两个 CSV 放入 data/raw/ 后重新执行本脚本。")
 
     # --- 模拟运营数据 ---
     for csv_name, table in [

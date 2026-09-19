@@ -605,9 +605,23 @@ def test_evaluate_case_feeds_extra_metric_truth_to_judge():
     eval_set = load_eval_set()
     case = eval_set.get("E09")
     runner = EvalRunner(eval_set=eval_set)
+
+    # ★ 两个数字都从数据库现查，不写死。
+    #   写死会把这个用例绑死在「完整版」数据集上：Docker 镜像跑的是无真实
+    #   Steam 数据的「精简版」（合成画像），付费率与 ARPPU 与完整版不同，
+    #   写死的数字会让这条用例在镜像里假失败 —— 而它要验的是「接线」，
+    #   不是「某个具体数值」。
+    #   arppu 走 tools.execute 独立查一次（不复用被测的 build_extra_reference_rows），
+    #   避免用被测函数的输出反过来当期望值。
+    main_rows, _ = runner.build_reference(case)
+    rate = main_rows[0]["payment_rate_pct"]
+    arppu = runner.tools.execute(
+        "query_metric", {"metric_id": "arppu", "params": {}}
+    ).data["rows"][0]["arppu"]
+
     answer = AgentAnswer(
         question=case.question,
-        answer="最近 7 天付费转化率为 3.70%，付费用户人均付费 229.00 元。",
+        answer=f"最近 7 天付费转化率为 {rate}%，付费用户人均付费 {arppu} 元。",
         ok=True,
         steps=[
             make_query_step("payment_rate", {}),
@@ -621,7 +635,7 @@ def test_evaluate_case_feeds_extra_metric_truth_to_judge():
     reference_text = judge.calls[0][1]
     assert "【模型额外查询的指标】" in reference_text
     assert "arppu" in reference_text
-    # 两个数字都应有出处（229.00 来自额外指标的真值，而不是被判成编造）
+    # 两个数字都应有出处（arppu 的值来自额外指标的真值，而不是被判成编造）
     assert result.hallucination.sentence_flagged == 0
 
 

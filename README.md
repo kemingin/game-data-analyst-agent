@@ -113,6 +113,8 @@ Game Data Analyst Agent/
 ├── app.py                          # Streamlit 前端主入口
 ├── requirements.txt
 ├── .env.example                    # API Key 模板（复制为 .env 后填入）
+├── Dockerfile                      # 【Phase 10】镜像定义：装依赖 → 生成数据 → 建库 → 起服务
+├── .dockerignore                   # 【Phase 10】构建上下文排除（★ 第一职责是挡住 .env）
 │
 ├── src/
 │   ├── config.py                   # 全局配置：路径 / 业务常量 / SQL 护栏 / LLM 参数
@@ -170,7 +172,7 @@ Game Data Analyst Agent/
 │   ├── run_hallucination_eval.py   # 专项 · 幻觉与端到端质量（Phase 3，--tag 标轮次）
 │   └── run_robustness_eval.py      # 专项 · 鲁棒性与边界（Phase 4）
 │
-├── tests/                          # 400+ 个测试函数 / pytest 收集 735 条
+├── tests/                          # 400+ 个测试函数 / pytest 收集 743 条
 ├── docs/                           # 文档与评测产物（按「谁读」分四层，见下表）
 │   ├── 01_项目文档/                 # 第一次接触项目时读
 │   │   ├── data_dictionary.md      # 数据字典
@@ -265,6 +267,24 @@ python scripts/run_robustness_eval.py                      # Phase 4 · 鲁棒�
 python -m pytest -q
 ```
 
+### 7. 用 Docker 跑（Phase 10 · 一条命令，免装环境）
+
+镜像**自给自足**：构建时自动生成模拟数据、建库，不需要下载那 111MB 真实 Steam 数据。
+
+```bash
+docker build -t gda .      # 构建（内含生成数据 + 建库，几十秒）
+docker run --rm -p 8501:8501 -e DEEPSEEK_API_KEY=sk-xxx gda
+```
+
+不带 Key 也能启动 —— 前端会显示「尚未配置 API Key」的引导文案，方便先看产品形态；
+Key 只能通过 `-e` 运行时注入（镜像里不含任何密钥，`.env` 已被 `.dockerignore` 排除）。
+
+> **诚实边界**：镜像里只有模拟数据（合成画像，「精简版」），真实 Steam 数据相关的
+> `dim_game` / `user_game` 两张表为空（它们只服务「游戏库 / 玩家画像」类分析，
+> 12 个运营指标一个都不依赖）。精简版与完整版的**指标口径与算法完全相同，但数值不同**，
+> 既往评测报告的数字都是在完整版上测的，别拿精简版的数值去对报告。
+> 需要完整数据时，把两个 CSV 放进 `data/raw/` 后在本机直接跑脚本即可。
+
 ---
 
 ## 六、指标清单（12 个）
@@ -325,7 +345,7 @@ Phase 6 基线（31 条用例 v1.1，真实调用大模型）：
 
 | 层 | 入口 | 规模 | 成本 | 回答什么问题 |
 | --- | --- | --- | --- | --- |
-| 单元测试 | `python -m pytest -q` | 400+ 个函数 / 735 条 | 零成本 | 改代码有没有改坏 |
+| 单元测试 | `python -m pytest -q` | 400+ 个函数 / 743 条 | 零成本 | 改代码有没有改坏 |
 | 端到端评测 | `scripts/run_eval.py` | 31 条用例 | 花 token | 答得准不准、贵不贵 |
 | 专项评测 | `scripts/run_*_eval.py` | 5 个 Phase | 花 token | 单点深挖（见下表） |
 
@@ -397,7 +417,7 @@ Phase 6 基线（31 条用例 v1.1，真实调用大模型）：
 | --- | --- |
 | [开发复盘记录](file:///e:/TraeCode/Work/JAVAWork/Game%20Data%20Analyst%20Agent/docs/01_项目文档/开发复盘记录_Phase1-3.txt) | 全流程复盘：每个设计决策的取舍、踩过的坑、常见追问的答法 |
 | [测试复盘记录](file:///e:/TraeCode/Work/JAVAWork/Game%20Data%20Analyst%20Agent/docs/02_测试复盘/测试复盘记录.txt) | 测试体系全档案：三层的分工、幻觉两个口径、评测台自身五次出错、常见追问 |
-| [文件清单说明](file:///e:/TraeCode/Work/JAVAWork/Game%20Data%20Analyst%20Agent/docs/01_项目文档/文件清单说明.txt) | 逐文件说明：94 个文件各是干什么的、在架构哪个位置、设计要点是什么 |
+| [文件清单说明](file:///e:/TraeCode/Work/JAVAWork/Game%20Data%20Analyst%20Agent/docs/01_项目文档/文件清单说明.txt) | 逐文件说明：115 个文件各是干什么的、在架构哪个位置、设计要点是什么 |
 | [数据字典](file:///e:/TraeCode/Work/JAVAWork/Game%20Data%20Analyst%20Agent/docs/01_项目文档/data_dictionary.md) | 9 张表的字段说明与业务含义 |
 | [评测报告](file:///e:/TraeCode/Work/JAVAWork/Game%20Data%20Analyst%20Agent/docs/03_评测报告/评测报告_Phase6.txt) | 端到端 31 条用例的逐例明细与总览 |
 | [专项报告](file:///e:/TraeCode/Work/JAVAWork/Game%20Data%20Analyst%20Agent/docs/03_评测报告/工具调用测试报告_Phase1.txt) | 5 个专项的原始留档（工具 / 性能缓存 / 幻觉质量 / 鲁棒性边界） |
@@ -411,7 +431,7 @@ Phase 6 基线（31 条用例 v1.1，真实调用大模型）：
 
 ## 十一、技术栈
 
-Python 3.11 · SQLite · Streamlit · Plotly · OpenAI SDK（DeepSeek / 智谱 GLM）· pytest
+Python 3.11 · SQLite · Streamlit · Plotly · OpenAI SDK（DeepSeek / 智谱 GLM）· pytest · Docker
 
 ---
 
@@ -452,7 +472,7 @@ Python 3.11 · SQLite · Streamlit · Plotly · OpenAI SDK（DeepSeek / 智谱 G
 ### 4. 提交前自检
 
 - [ ] `git status` 里没有 `.env`、没有 `data/` 下的大文件（密钥与 107MB 数据库都不入库）
-- [ ] `pytest -q` 全绿（当前 735 条）
+- [ ] `pytest -q` 全绿（当前 743 条）
 - [ ] 新增 / 删除文件后，`docs/01_项目文档/文件清单说明.txt` 的条目与统计已同步更新
 - [ ] README 中提到的每个路径都真实存在（含 `docs/` 四层子目录）
 

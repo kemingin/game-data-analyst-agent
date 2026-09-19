@@ -13,6 +13,17 @@ Phase 1 · 模拟游戏运营数据生成脚本
       3. 游戏 appid 是数据集中覆盖率最高的真实游戏；
       4. 时间窗口、版本节奏、渠道成本、付费档位全部按国内手游发行的真实规律设定。
 
+【★ 真实数据缺失时会怎样？（Phase 10 · 让新克隆也能建库）】
+    上面第 1、2 条依赖 data/raw/ 下 111MB 真实 Steam 数据，而它被 .gitignore
+    排除在仓库之外。若不做处理，**任何从 GitHub 克隆的仓库都建不出库** ——
+    只能看代码、跑不起来。
+    所以本脚本增加一条「合成画像」后备路径：真实数据在，就按原设计用真实
+    user_id 与真实游玩时长（完整版，与既往所有报告口径一致）；真实数据不在，
+    就按对数正态分布合成一个同规模的用户池（精简版，Docker 镜像走这条路）。
+    ★ 两条路径产出的**指标口径与计算方式完全相同**，但**数值不同** ——
+      精简版的用户画像不再与 Steam 大盘对齐。既往评测报告里的数字都是在
+      完整版上测的，别拿精简版的数值去对报告。
+
 【生成哪些表】
     dim_channel.csv           渠道维度（6 个渠道）
     dim_version.csv           版本维度（2 个大版本）
@@ -95,6 +106,11 @@ VERSION_COHORT_LIFT: float = 1.25       # v2.0 后注册的新用户，留存质
                                         #   取值依据：v2.0 的核心内容是「新手引导 2.0 重构」，
                                         #   而引导重构对次日留存的影响通常在 5~10 个百分点的绝对提升，
                                         #   以 37% 的基线算，相对提升 25% 约等于 +9pp，属于合理区间。
+
+# ---- 用户画像池（真实数据缺失时的合成后备）----
+# 合成池的规模刻意与真实 Steam 数据集的用户数（7,731）保持一致：
+#   这样「从池中抽 5,000 人」的抽样比例在两条路径下相同，人数结构不会有系统偏差。
+SYNTH_PROFILE_POOL_SIZE: int = 7731
 
 # ---- 招聘漏斗 ----
 N_CANDIDATES: int = 1200
@@ -198,17 +214,92 @@ def build_apply_weights() -> np.ndarray:
 # 三、各张表的生成逻辑
 # ===========================================================================
 
+def synthesize_user_profile(rng: np.random.Generator) -> pd.DataFrame:
+    """合成一个「用户画像」表，字段与 load_user_profile() 完全一致。
+
+    【为什么需要它？】
+      真实 Steam 数据（111MB）不在仓库里，而 build_dim_user 要从它抽样用户、
+        并用真实游玩时长算活跃倾向。缺了它整个建库流程就断了。
+      本函数提供等价替代：产出一张同样形状的画像表，让下游逻辑一行都不用改。
+      —— 这就是「接口不变、实现可替换」，也是当初把画像收敛成
+         load_user_profile() 一个函数的回报。
+
+    【为什么用对数正态分布？】
+      Steam 玩家游玩时长是典型的**重尾分布**：多数人只玩几十小时，
+        极少数人几千小时。用均匀分布会造出一堆「人人玩 300 小时」的假数据，
+        分层分析（S/A/B/C 用户）立刻失去意义。
+      对数正态（取对数后成正态）正是重尾现象最常用的刻画方式：
+        中位数给一个常识值，sigma 控制尾巴有多长。
+        中位数 500 分钟（约 8 小时）、sigma 1.6 时，99 分位约 2 万分钟（约 340 小时），
+        与真实 Steam 用户的行为量级一致。
+
+    【为什么池子要 7,731 人？】
+      与真实数据集的用户数保持一致，这样「从池中抽 5,000 人」这一步
+        在两条路径下的抽样比例相同，下游的人数结构不会有系统性偏差。
+    """
+    n = SYNTH_PROFILE_POOL_SIZE
+
+    # 总游玩时长：重尾。np.log(500) 让中位数落在 500 分钟。
+    playtime_total = rng.lognormal(mean=np.log(500.0), sigma=1.6, size=n)
+
+    # 玩过的游戏数：与游玩时长同向，但另有独立波动（玩得久不等于玩得多）。
+    game_cnt = rng.lognormal(mean=np.log(12.0), sigma=1.1, size=n)
+    game_cnt = np.clip(np.round(game_cnt), 1, 2000).astype(int)
+
+    # 单款最长时长：不可能超过总时长，取 35%~100% 之间的一个比例。
+    playtime_max = playtime_total * rng.uniform(0.35, 1.0, size=n)
+
+    # 主力游戏时长：真实数据里没玩过主力游戏的用户会被记 0（见 load_user_profile），
+    #   这里同样保留「一部分人为 0」的特征，否则后续用户偏好分析会过于乐观。
+    has_main = rng.random(n) < 0.60
+    playtime_main = np.where(has_main, playtime_max * rng.uniform(0.10, 0.90, size=n), 0.0)
+
+    return pd.DataFrame(
+        {
+            # 用连续整数做主键：一眼能看出是合成的，不会与真实 Steam user_id 混淆。
+            "user_id": np.arange(1, n + 1),
+            "real_game_cnt": game_cnt,
+            "real_playtime_total": playtime_total,
+            "real_playtime_max": playtime_max,
+            "real_playtime_main": playtime_main,
+        }
+    )
+
+
+def load_profile(rng: np.random.Generator) -> pd.DataFrame:
+    """取用户画像表：有真实数据就用真实的，没有就合成。
+
+    【为什么把「判断 + 提示」收在一个函数里，而不是散在 build_dim_user 里？】
+      因为「当前跑的是完整版还是精简版」是**整条链路都要知道**的信息。
+      收在一处，调用方不必重复判断，提示语也只写一遍 ——
+      以后若要加「第三种数据来源」，只改这里。
+    """
+    if cfg.RAW_USER_GAME.exists():
+        profile = load_user_profile()
+        print(f"  · 真实用户池：{len(profile):,} 人（画像分布与 Steam 大盘对齐）")
+        return profile
+
+    profile = synthesize_user_profile(rng)
+    print(f"  · 未找到真实 Steam 数据（{cfg.RAW_USER_GAME.name}），改用合成用户池："
+          f"{len(profile):,} 人")
+    print("    说明：画像分布按对数正态模拟，不再与 Steam 大盘对齐。")
+    print("          12 个运营指标的**口径与算法完全相同**，但数值与完整版不同；")
+    print("          既往评测报告的数字均出自完整版，请勿混用。")
+    return profile
+
+
 def build_dim_user(rng: np.random.Generator, date_factors: np.ndarray) -> pd.DataFrame:
     """生成用户维度表（5,000 人）。
 
     关键设计：用户不是随机撒的，每一步都注入真实业务规律。
-      1. 从真实 7,731 人中随机抽 5,000 人（抽样保证画像分布与大盘一致）；
-      2. 用真实游玩时长算出「活跃倾向系数 engagement_q」，让真实重度用户在模拟数据里也更黏；
+      1. 从用户池中随机抽 5,000 人（抽样保证画像分布与大盘一致）；
+      2. 用游玩时长算出「活跃倾向系数 engagement_q」，让重度用户在模拟数据里也更黏；
       3. 注册日期叠加「大盘增长趋势 + 周末效应 + 版本拉新脉冲」；
       4. 渠道按真实投放占比分配，并给每个渠道不同的质量基线。
+
+    用户池来自 load_profile()：真实 Steam 数据在就用真实的，不在就用合成的。
     """
-    profile = load_user_profile()
-    print(f"  · 真实用户池：{len(profile):,} 人")
+    profile = load_profile(rng)
 
     # --- 1) 抽样 5,000 名用户 ---
     sampled = profile.sample(n=cfg.N_SIMULATED_USERS, random_state=cfg.RANDOM_SEED)
@@ -593,6 +684,13 @@ def main() -> None:
     print(f"  数据窗口：{cfg.DATA_START} ~ {cfg.DATA_END}（{cfg.DATA_DAYS} 天）")
     print(f"  运营游戏：appid={cfg.MAIN_APPID}")
     print(f"  随机种子：{cfg.RANDOM_SEED}（固定种子，结果可复现）")
+    # 提前把「跑的是哪个版本」写在最上面：后面输出的所有数值都受它影响，
+    #   读报告的人必须先知道前提，才不至于拿精简版的数字去对完整版的报告。
+    has_real = cfg.RAW_USER_GAME.exists()
+    print(f"  数据版本：{'完整版（真实 Steam 画像）' if has_real else '精简版（合成画像）'}")
+    if not has_real:
+        print("            ⚠ 未找到 data/raw/ 真实数据 —— 指标口径不变，但数值与")
+        print("              既往评测报告（基于完整版）不可直接比较。")
     print("=" * 78)
 
     date_factors = build_date_factors()

@@ -156,14 +156,18 @@ def test_allowed_tables_can_be_tightened(validator):
         )
 
 
-def test_allowed_tables_outside_global_whitelist_is_rejected(validator):
-    """如果指标声明了全局白名单之外的表，说明配置本身就有问题，必须报错。"""
+def test_allowed_tables_outside_dataset_whitelist_is_rejected(validator):
+    """如果指标声明了本数据集白名单之外的表，说明配置本身就有问题，必须报错。
+
+    注：多数据集改造后，比对基准从模块常量 ALLOWED_TABLES 换成实例的
+    self.allowed_tables（默认值仍是 ALLOWED_TABLES），错误文案随之更新。
+    """
     with pytest.raises(SQLSecurityError) as exc:
         validator.validate(
             "SELECT COUNT(*) FROM dim_user",
             allowed_tables=("dim_user", "not_exist_table"),
         )
-    assert "全局白名单" in str(exc.value)
+    assert "本数据集的白名单" in str(exc.value)
 
 
 # ---------------------------------------------------------------------------

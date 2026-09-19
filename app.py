@@ -6,14 +6,26 @@ Streamlit 前端（Phase 4）—— 项目主入口
 
     streamlit run app.py
 
-【界面分成四块，每块只干一件事】
+【界面分成五块，每块只干一件事】
 
-    侧边栏    数据概览 + 指标口径卡片 + 人工确认审计日志
+    侧边栏    数据集选择与上传 + 数据概览 + 指标口径卡片 + 人工确认审计日志
     对话区    用户提问 → Agent 作答（Streamlit 原生 chat 组件）
     数据区    指标卡 / 自动图表 / 原始结果表格
     过程区    默认折叠的「执行过程」：调了哪些工具、传了什么参数、跑了哪条 SQL
 
-【这一层最重要的四个设计决策（设计要点）】
+【执行顺序是硬约束，不能调换】
+
+    main() 里的三步是刻意排的：
+
+        ① 渲染数据集选择器        → 拿到「这一轮看哪个数据集」
+        ② build_context(...)      → 组装上下文（库 / 指标 / 窗口 / 白名单）
+        ③ 渲染其余界面与 Agent    → 全部只认 ctx
+
+    为什么不能合成一步？因为「数据概览读哪个库」「指标字典读哪份 JSON」
+    「Agent 连哪个库」这三件事的答案都由①决定。先渲染后判断，就会出现
+    界面上写着数据集 A、查询却打在库 B 的错位 —— 而且不报错。
+
+【这一层最重要的五个设计决策（设计要点）】
 
   1. Agent 实例必须用 st.cache_resource 缓存。
      Streamlit 的执行模型非常特殊：**每一次交互都会把整个脚本从头重跑一遍**。
@@ -35,6 +47,13 @@ Streamlit 前端（Phase 4）—— 项目主入口
      给出复核人输入框 + 勾选确认 + 写入审计日志。
      为什么这么重？因为「谁在什么时候确认了哪条结论」必须有迹可循 ——
      这正是数据产品里"人工兜底环节"应有的产品形态。
+
+  5. 所有缓存的键里都必须带「数据集身份」。
+     这是多数据集改造里最容易漏、也最难发现的一处：st.cache_resource /
+     st.cache_data 的键由「函数名 + 参数」决定，改造前这几个函数**没有参数**，
+     键恒定 —— 于是切换数据集后它们照旧返回上一个数据集的对象，
+     表现为「界面上选了新数据集，数据概览和查询结果还是旧的」，而且不报错。
+     现在它们的参数里都带着 dataset_id / cache_key，键随数据集身份变化。
 """
 
 from __future__ import annotations
@@ -47,6 +66,7 @@ import streamlit as st
 
 from src import config as cfg
 from src.agent.react_agent import AgentAnswer, AgentStep, GameDataAgent
+from src.context import DatasetContext, build_context
 from src.metrics.registry import Metric, MetricRegistry, get_registry
 from src.ui.charts import (
     build_figure,
@@ -54,6 +74,7 @@ from src.ui.charts import (
     pick_chart_spec,
     to_dataframe,
 )
+from src.ui.dataset_panel import get_store, render_dataset_picker
 from src.ui.overview import load_table_stats
 
 # ---------------------------------------------------------------------------
@@ -91,26 +112,49 @@ _MAX_HISTORY_EXCHANGES: int = 2
 # ===========================================================================
 
 @st.cache_resource(show_spinner=False)
-def get_agent() -> GameDataAgent:
-    """全局唯一的 Agent 实例（含 LLM 客户端与工具执行器）。"""
-    return GameDataAgent()
+def get_agent(dataset_id: str, cache_key: str) -> GameDataAgent:
+    """按数据集缓存的 Agent 实例（含 LLM 客户端与工具执行器）。
+
+    【为什么参数里必须有 cache_key？—— 这是多数据集改造里最容易漏的一处】
+      st.cache_resource 的缓存键由「函数名 + 参数」决定。改造前这个函数**没有参数**，
+      键恒定，所以切换数据集后它仍然返回上一个数据集的 Agent：
+      指标注册表、库路径、数据窗口、表白名单全部还是旧的那套。
+      而「A 方案的模板 + B 数据集的库」这种错配**不会报错**——
+      若两个库恰好都有同名表，查询会成功并返回一个语义完全错误的数字，
+      过程区显示的 SQL 看起来毫无异常。把 dataset.cache_key() 算进缓存键，
+      键就跟着数据集身份走，这类错配在缓存层就被消解了。
+
+    【为什么 dataset_id 也单独传？】
+      只为了可读性与报错定位：cache_key 是拼接串，出问题时看不出是哪个数据集。
+    """
+    return GameDataAgent(context=build_context(dataset_id, store=get_store()))
 
 
 @st.cache_resource(show_spinner=False)
-def get_metric_registry() -> MetricRegistry:
-    """指标注册表（读 JSON 文件 + 建对象，没必要每次重跑都做）。"""
-    return get_registry()
+def get_metric_registry(registry_path: str) -> MetricRegistry:
+    """指标注册表（读 JSON 文件 + 建对象，没必要每次重跑都做）。
+
+    路径进参数：每个数据集可能指向不同的指标方案文件，写死路径就等于
+    「不管选哪个数据集，指标字典永远显示内置方案」。
+    """
+    return get_registry(registry_path)
 
 
 @st.cache_data(ttl=600, show_spinner=False)
-def get_table_stats() -> dict:
+def get_table_stats(db_path: str, data_start: Any, data_end: Any) -> dict:
     """数据概览。加 10 分钟缓存：库结构不会秒变，而 COUNT(*) 全表扫是要花时间的。
 
     注意用的是 cache_data（缓存**数据**）而不是 cache_resource（缓存**资源**）：
     cache_data 会把返回值序列化一份副本，即使外部改了它也污染不到缓存本体。
     只读的展示数据适合 cache_data，带连接/句柄的对象才用 cache_resource。
+
+    【日期参数为什么显式传 dataset 的值？】
+      因为 cfg.DATA_START/END 是**内置数据集**的窗口。上传的数据集若照抄这个值，
+      界面会出现「可用数据范围：2026-06-20 ~ 2026-09-17」而数据里根本没有这个区间
+      —— 这是「配置的承诺冒充数据的真相」，比不显示更糟。
+      dataset 的日期为 None 时传 None，overview 会显示「未知」（哨兵机制见 overview.py）。
     """
-    return load_table_stats()
+    return load_table_stats(db_path=db_path, data_start=data_start, data_end=data_end)
 
 
 # ===========================================================================
@@ -246,24 +290,47 @@ def build_export_text(answer: AgentAnswer) -> str:
 # 三、侧边栏
 # ===========================================================================
 
-def render_sidebar() -> None:
-    """渲染左侧信息栏：数据概览 + 指标口径 + 审计日志。"""
+def render_sidebar_head(store: Any) -> str:
+    """侧边栏上半部分：标题 + 数据集选择器。返回当前选中的 dataset_id。
+
+    【为什么必须和下半部分拆成两个函数？】
+      因为「选哪个数据集」决定了要组装哪个上下文，而数据概览、指标字典、Agent
+      都依赖那个上下文。所以顺序只能是「先选 → 再装 → 后渲染」，
+      写成一个大函数就会出现「先渲染数据概览、再知道要看哪个库」的倒置。
+      这个顺序约束在下面的 main() 里体现得很直白。
+    """
     with st.sidebar:
         st.markdown("## 🎮 游戏数据智能分析师")
         st.caption("自然语言 → 标准指标口径 → 受控 SQL → 真实数据")
+        return render_dataset_picker(store)
 
-        _render_data_overview()
+
+def render_sidebar_tail(ctx: DatasetContext) -> None:
+    """侧边栏下半部分：数据概览 + 指标字典 + 审计日志 + 页脚。
+
+    全部依赖 ctx —— 它们展示的库、指标、窗口、白名单都必须来自同一个数据集，
+    这正是「打包成上下文」的收益：这里只传一个参数，不可能传漏。
+    """
+    with st.sidebar:
         st.divider()
-        _render_metric_catalog()
+        _render_data_overview(ctx)
+        st.divider()
+        _render_metric_catalog(ctx)
         st.divider()
         _render_audit_log()
         st.divider()
-        _render_footer_actions()
+        _render_footer_actions(ctx)
 
 
-def _render_data_overview() -> None:
-    """数据概览：告诉用户「我的数据边界在哪」。"""
-    stats = get_table_stats()
+def _render_data_overview(ctx: DatasetContext) -> None:
+    """数据概览：告诉用户「我的数据边界在哪」。
+
+    日期显式取自 ctx.dataset（而不是让 overview 自己读 config），理由见
+    get_table_stats 的注释：上传数据集的窗口必须来自数据本身。
+    """
+    stats = get_table_stats(
+        str(ctx.db_path), ctx.dataset.data_start, ctx.dataset.data_end
+    )
 
     with st.expander("📊 数据概览", expanded=True):
         if stats.get("error"):
@@ -271,18 +338,25 @@ def _render_data_overview() -> None:
             return
 
         window = stats["window"]
+        # 数据集的日期识别不出来时（上传的 CSV 里没有日期列），窗口是 None。
+        # 此时显示「未知」而不是套用内置窗口 —— 宁可说不知道，也不能报一个假边界。
+        has_window = bool(window["start"] and window["end"])
+
         col1, col2 = st.columns(2)
         col1.metric("业务表数量", f"{stats['table_count']} 张")
         col2.metric("总数据量", f"{stats['total_rows']:,} 行")
-        col1.metric("数据窗口", f"{window['days']} 天")
+        col1.metric("数据窗口", f"{window['days']} 天" if has_window else "未知")
         col2.metric("库文件体积", f"{stats['db_size_mb']} MB")
 
         # 数据窗口单独用一行文字写清楚 —— 这是用户提问前最该知道的一件事，
         # 藏在两个 metric 里反而看不清。
-        st.caption(
-            f"可用数据范围：**{window['start']}** ~ **{window['end']}**"
-            f"（日粒度，T+1 更新）"
-        )
+        if has_window:
+            st.caption(
+                f"可用数据范围：**{window['start']}** ~ **{window['end']}**"
+                f"（日粒度，T+1 更新）"
+            )
+        else:
+            st.caption("可用数据范围：**未知**（本数据集中未识别出日期列）")
 
         rows = [
             {"表名": item["name"], "行数": item["rows"], "说明": item["note"]}
@@ -291,14 +365,19 @@ def _render_data_overview() -> None:
         st.dataframe(rows, height=240, hide_index=True)
 
 
-def _render_metric_catalog() -> None:
+def _render_metric_catalog(ctx: DatasetContext) -> None:
     """指标口径卡片：让「口径」这件事在界面上可见。
 
-    运营和数据团队吵架最多的地方就是口径。把 12 个指标的定义、参数、
-    来源表全部摊开放在这里，等于把「指标字典」做成了产品的一部分，
+    运营和数据团队吵架最多的地方就是口径。把指标的定义、参数、来源表
+    全部摊开放在这里，等于把「指标字典」做成了产品的一部分，
     而不是一份没人看的 PDF。
+
+    【为什么注册表按 ctx.scheme 加载而不是用全局默认？】
+      指标方案已经和数据集解耦 —— 不同数据集可以指向不同的方案文件。
+      写死默认路径的话，界面上会出现「指标字典显示的是 A 方案，实际查询用的是 B 方案」，
+      而这两个东西对不上时，用户会照着错的口径去理解数字。
     """
-    registry = get_metric_registry()
+    registry = get_metric_registry(str(ctx.scheme.registry_path))
 
     with st.expander("📖 指标口径字典", expanded=False):
         categories = ["全部"] + sorted({m.category for m in registry.all() if m.category})
@@ -307,7 +386,10 @@ def _render_metric_catalog() -> None:
         metrics = [
             m for m in registry.all() if choice == "全部" or m.category == choice
         ]
-        st.caption(f"共 {len(metrics)} 个指标 · 定义文件 src/metrics/metrics_registry.json")
+        st.caption(
+            f"共 {len(metrics)} 个指标 · 方案：{ctx.scheme.display_name}"
+            f"（`{ctx.scheme_id}`）"
+        )
 
         for metric in metrics:
             with st.expander(f"{metric.metric_name}", expanded=False):
@@ -362,9 +444,9 @@ def _render_audit_log() -> None:
             st.divider()
 
 
-def _render_footer_actions() -> None:
+def _render_footer_actions(ctx: DatasetContext) -> None:
     """底部：模型状态与操作按钮。"""
-    agent = get_agent()
+    agent = get_agent(ctx.dataset_id, ctx.cache_key())
     client = agent.llm_client
 
     if getattr(client, "is_configured", False):
@@ -603,9 +685,31 @@ def main() -> None:
     if "audit_log" not in st.session_state:
         st.session_state.audit_log = []
 
-    render_sidebar()
+    # --- 第一步：数据集选择器 ---
+    # 必须先渲染它，才知道这一轮要给用户看哪个数据集的数据。
+    store = get_store()
+    dataset_id = render_sidebar_head(store)
+
+    # --- 第二步：组装运行时上下文 ---
+    # 一个对象打包了「查哪个库 + 用哪套指标 + 日期窗口 + 表白名单」。
+    # 下面所有渲染与 Agent 调用都只认它，不再各自去读全局 config。
+    try:
+        ctx = build_context(dataset_id, store=store)
+    except (KeyError, FileNotFoundError, ValueError) as exc:
+        st.error(f"无法加载数据集：{exc}")
+        st.stop()
+
+    # --- 第三步：侧边栏其余部分 ---
+    render_sidebar_tail(ctx)
 
     st.title("🎮 游戏数据智能分析师")
+    # 当前数据集要写在主区而不是只放侧边栏：侧边栏可以收起，
+    # 而「这份结论是哪份数据的结论」必须始终可见。
+    st.caption(
+        f"当前数据集：**{ctx.dataset.display_name}**（`{ctx.dataset_id}`）· "
+        f"指标方案：{ctx.scheme.display_name} · "
+        f"数据窗口：{ctx.data_start} ~ {ctx.data_end}"
+    )
     st.caption(
         "用中文提问 → 自动映射到标准指标口径 → 生成并校验 SQL → 查真实数据 → "
         "给出结论与图表。所有数字均来自数据库，模型不写 SQL、也不编数字。"
@@ -645,7 +749,9 @@ def main() -> None:
 
         with st.chat_message("assistant", avatar="🎮"):
             with st.spinner("正在分析：理解问题 → 匹配指标口径 → 查询数据…"):
-                agent = get_agent()
+                # 用 ctx 取 Agent：库路径、指标方案、数据窗口、白名单都来自它，
+                # 因此不会出现「切了数据集但查询还打在旧库上」。
+                agent = get_agent(ctx.dataset_id, ctx.cache_key())
                 answer = agent.ask(question, history=build_history(st.session_state.turns))
 
         st.session_state.turns.append({"question": question, "answer": answer})

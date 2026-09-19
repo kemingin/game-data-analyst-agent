@@ -27,7 +27,9 @@ from __future__ import annotations
 
 import sqlite3
 import urllib.parse
+from datetime import date
 from pathlib import Path
+from typing import Any
 
 from src import config as cfg
 
@@ -47,6 +49,16 @@ _TABLE_NOTES: dict[str, str] = {
     # 下面是 SQL 视图或中间表可能出现的名字，留空不影响展示
 }
 
+# 【为什么要一个「未传入」哨兵，而不是直接用 None？】
+#   多数据集下「日期窗口」有三种状态，None 只能表达两种：
+#     · 没传          → 用全局 config 的值（改造前的行为，必须保持）
+#     · 传了具体日期  → 用这个数据集自己的窗口
+#     · 明确传 None   → 这个数据集**没有可识别的日期字段**，界面该显示「未知」
+#   第三种状态如果也走 config，界面就会出现「可用数据范围：2026-06-20 ~ 2026-09-17」
+#   而数据里一个日期都没有 —— 这是「配置的承诺冒充数据的真相」，
+#   比不显示更糟：用户会据此以为数据覆盖了那个区间。
+_UNSET: Any = object()
+
 # 只读 URI 前缀：mode=ro 让 SQLite 在打开文件时就以只读挂载，
 # 任何写操作在驱动层直接报错，比「连上之后再检查」可靠得多。
 _READ_ONLY_PREFIX = "file:"
@@ -63,8 +75,90 @@ def _connect_read_only(db_path: Path) -> sqlite3.Connection:
     return sqlite3.connect(uri, uri=True)
 
 
-def load_table_stats(db_path: str | Path | None = None) -> dict:
+def _iso(value: date | str) -> str | None:
+    """把 date / ISO 字符串统一成 "YYYY-MM-DD"；解析不出返回 None。
+
+    【为什么不直接用 str(value)？】
+      因为上传数据集记录的窗口来自 CSV，格式可能是 "2026/9/7"。
+      直接透传会让界面出现两种日期写法，也让「天数」算不出来。
+      解析失败时返回 None（显示「未知」）比显示一个错日期更诚实。
+    """
+    if isinstance(value, date):
+        return value.isoformat()
+    try:
+        return date.fromisoformat(str(value).strip()).isoformat()
+    except ValueError:
+        return None
+
+
+def _span_days(start_iso: str, end_iso: str) -> int:
+    """闭区间天数：2026-09-10 ~ 2026-09-16 是 7 天（不是 6 天）。
+
+    与 SQL 里 `julianday(MAX) - julianday(MIN) + 1` 的口径保持一致 ——
+    同一件事在两处用不同的算法，是「界面数字和报告数字对不上」的常见根因。
+    """
+    try:
+        return (date.fromisoformat(end_iso) - date.fromisoformat(start_iso)).days + 1
+    except ValueError:
+        return 0
+
+
+def load_table_preview(
+    db_path: str | Path,
+    table: str,
+    limit: int = 50,
+) -> dict:
+    """读取一张表的前若干行，用于上传后的「导入结果核对」。
+
+    【为什么表名可以直接拼进 SQL？】
+      因为它来自 sqlite_master / DatasetStore 的登记信息（由 upload.py 建表时写入），
+      不是用户输入 —— 与 load_table_stats 里 COUNT(*) 的说明同理。
+      但仍然用双引号包裹：用户上传 order.csv 时表名就是 order，不加引号会语法错误。
+
+    返回 {"columns": [...], "rows": [[...]], "error": None | str}
+    与 load_table_stats 一致，失败不抛异常而是塞进 error —— 这是侧边栏的展示信息，
+    单块显示不出来不该让整页白屏。
+    """
+    result: dict = {"columns": [], "rows": [], "error": None}
+    path = Path(db_path)
+    if not path.exists():
+        result["error"] = f"数据库文件不存在：{path}"
+        return result
+
+    quoted = '"' + table.replace('"', '""') + '"'
+    try:
+        conn = _connect_read_only(path)
+    except sqlite3.Error as exc:  # pragma: no cover - 只在库损坏/被锁时触发
+        result["error"] = f"数据库打开失败：{exc}"
+        return result
+
+    try:
+        cursor = conn.cursor()
+        # limit 走参数绑定（它是值，不是标识符，SQL 允许绑定）
+        cursor.execute(f"SELECT * FROM {quoted} LIMIT ?", (int(limit),))
+        result["columns"] = [desc[0] for desc in cursor.description or ()]
+        result["rows"] = [list(row) for row in cursor.fetchall()]
+    except sqlite3.Error as exc:
+        result["error"] = f"读取预览失败：{exc}"
+    finally:
+        conn.close()
+
+    return result
+
+
+def load_table_stats(
+    db_path: str | Path | None = None,
+    data_start: Any = _UNSET,   # date | str | None；默认哨兵 = 「没传」
+    data_end: Any = _UNSET,     # date | str | None；默认哨兵 = 「没传」
+    table_notes: dict[str, str] | None = None,
+) -> dict:
     """读取数据库概览信息。
+
+    参数：
+      db_path     — 数据库文件；None → 默认内置库（改造前行为）
+      data_end    — 若传 None 表示「本数据集无日期窗口」，界面显示「未知」，
+                    且不再尝试用快照表的真实日期覆盖 config 值
+      table_notes — 表名 → 中文说明的映射；None → 用内置这套默认说明
 
     返回结构：
         {
@@ -81,6 +175,28 @@ def load_table_stats(db_path: str | Path | None = None) -> dict:
     也应该只是「这块显示不出来」，而不是整个页面白屏。
     """
     path = Path(db_path) if db_path else cfg.DB_PATH
+    notes_map = table_notes if table_notes is not None else _TABLE_NOTES
+
+    # ---- 日期窗口默认值的解析 ----
+    # 用一个 object() 哨兵区分「没传」与「明确传 None」：
+    #   _UNSET（没传）   → 回落 config 的全局窗口（改造前的行为，必须保留）
+    #   传了 date / str  → 用数据集自己的窗口
+    #   传了 None        → 数据集无日期，显示「未知」
+    if data_start is _UNSET and data_end is _UNSET:
+        # 逐字节保留改造前的行为：窗口与天数都直接取 config
+        start_default: str | None = cfg.DATA_START.isoformat()
+        end_default: str | None = cfg.DATA_END.isoformat()
+        days_default = cfg.DATA_DAYS
+    else:
+        start_default = None if data_start is None else _iso(data_start)
+        end_default = None if data_end is None else _iso(data_end)
+        if start_default and end_default:
+            days_default = _span_days(start_default, end_default)
+        else:
+            # 只知道一端（或两端都不知道）→ 无法算跨度，用 0 表示「未知」，
+            # 而不是硬凑一个数字。前端据此显示「未知」。
+            days_default = 0
+
     result: dict = {
         "db_path": str(path),
         "db_size_mb": 0.0,
@@ -88,9 +204,9 @@ def load_table_stats(db_path: str | Path | None = None) -> dict:
         "total_rows": 0,
         "tables": [],
         "window": {
-            "start": cfg.DATA_START.isoformat(),
-            "end": cfg.DATA_END.isoformat(),
-            "days": cfg.DATA_DAYS,
+            "start": start_default,
+            "end": end_default,
+            "days": days_default,
         },
         "error": None,
     }
@@ -127,7 +243,9 @@ def load_table_stats(db_path: str | Path | None = None) -> dict:
             cursor.execute(f'SELECT COUNT(*) FROM "{name}"')
             rows = int(cursor.fetchone()[0])
             total += rows
-            tables.append({"name": name, "rows": rows, "note": _TABLE_NOTES.get(name, "-")})
+            tables.append(
+                {"name": name, "rows": rows, "note": notes_map.get(name, "-")}
+            )
 
         # 用真实数据把「数据窗口」再校准一次：config.py 里写的是生成参数，
         # 而这里读到的是**库里实际存在的日期范围**，两者不一致时以库为准。

@@ -6,6 +6,13 @@ data/*.db-journal
 data/*.db-wal
 data/*.db-shm
 
+# 多数据集目录：每个上传的数据集一个子目录（<id>/data.db + <id>/raw/*.csv）。
+# 【为什么必须单列一条？】上面的 `data/*.db` 只匹配 data/ 下的**一层**文件，
+#   匹配不到 data/datasets/<id>/data.db 这种嵌套路径 —— 上传的数据会被误提交。
+# index.json 也一并忽略：它是「派生状态」而非源资产，首次构造时
+# ensure_builtin() 会自动重建，任何克隆都能自愈（详见 src/data/dataset.py）。
+data/datasets/
+
 # ---- 环境与密钥 ----
 .env
 .venv/
@@ -26,5 +33,6 @@ __pycache__/
 # ---- IDE / 系统 ----
 .idea/
 .vscode/
+.trae/
 .DS_Store
 Thumbs.db

@@ -175,8 +175,31 @@ class SQLValidator:
         # safe_sql 已补齐 LIMIT，可直接交给 executor 执行
     """
 
-    def __init__(self, max_rows: int | None = None) -> None:
+    def __init__(
+        self,
+        max_rows: int | None = None,
+        allowed_tables: frozenset[str] | set[str] | tuple[str, ...] | None = None,
+    ) -> None:
+        """allowed_tables=None 表示沿用全局白名单 ALLOWED_TABLES。
+
+        【为什么默认值是 None，而不是直接写成 ALLOWED_TABLES？】
+          因为两者语义不同：
+            · None       = 「没指定，用全局默认」
+            · 显式空集合 = 「这个数据集一张表都不许查」
+          只有用 None 做哨兵才能表达这个区别。如果默认写成空集合，
+          「没指定」会被误判成「不许查任何表」；反过来用 falsy 判断
+          则会把「显式空集」误判成「没指定」而悄悄放开全库 ——
+          这是典型的默认值陷阱。
+
+        【多数据集下这个参数为什么必须存在？】
+          改造前白名单是全局硬编码的 9 张表，语义是「全库允许被查询的表」。
+          多数据集下「全库」这个概念不再成立 —— 每个数据集有自己的表清单，
+          指标声明的来源表必须落在**本数据集实际存在的表**里。
+        """
         self.max_rows: int = max_rows if max_rows is not None else cfg.SQL_MAX_ROWS
+        self.allowed_tables: frozenset[str] = (
+            ALLOWED_TABLES if allowed_tables is None else frozenset(allowed_tables)
+        )
 
     # ------------------------------------------------------------------
     # 对外主入口
@@ -321,20 +344,35 @@ class SQLValidator:
 
         return tables - cte_names
 
-    @staticmethod
     def _resolve_permitted_tables(
+        self,
         allowed_tables: tuple[str, ...] | set[str] | None,
     ) -> set[str]:
-        """确定本次允许引用的表集合。"""
+        """确定本次允许引用的表集合。
+
+        【为什么比对基准要从 ALLOWED_TABLES 换成 self.allowed_tables？】
+          这一行是「数据集隔离」真正生效的地方。
+          原来的语义是「指标声明的来源表不能超出全库白名单」——
+          在多数据集下，「全库白名单」这个概念本身就不存在了，
+          基准必须是**本数据集实际有的表**。
+          语义因此升级为「指标声明的来源表必须是本数据集里真实存在的表」，
+          比原来更严：原来允许声明任意 9 张表中的表，现在必须本库真有。
+
+        【为什么它是实例方法而不是静态方法了？】
+          因为它要读 self.allowed_tables。静态方法没有 self，
+          就没法按数据集切换基准。
+        """
         if allowed_tables is None:
-            return set(ALLOWED_TABLES)
+            return set(self.allowed_tables)
 
         requested = {name.lower() for name in allowed_tables}
-        outside = requested - ALLOWED_TABLES
+        outside = requested - self.allowed_tables
         if outside:
-            # 指标自己声明的来源表都不能超出全局白名单，这是配置层面的防线
+            # 指标自己声明的来源表都不能超出本数据集的白名单，
+            # 这是配置层面的防线（与 SQL 文本层面的 _check_table_whitelist 互为补充）
             raise SQLSecurityError(
-                f"指标声明的来源表不在全局白名单中：{', '.join(sorted(outside))}"
+                f"指标声明的来源表不在本数据集的白名单中：{', '.join(sorted(outside))}；"
+                f"本数据集可用的表：{', '.join(sorted(self.allowed_tables)) or '（无）'}"
             )
         return requested
 

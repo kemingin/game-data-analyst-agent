@@ -199,7 +199,49 @@ LLM_TOOL_MAX_ROWS: int = 60
 #   DAU 趋势 30 天、渠道对比 6 行这类结果都远小于 60，不会丢信息。
 
 # ----------------------------------------------------------------------------
-# 六、招聘岗位定义
+# 七、多数据集（Phase 7 新增）
+# ----------------------------------------------------------------------------
+# 【为什么要引入「多数据集」？】
+#   改造前项目是单数据集架构：一个库 + 一个全局指标注册表。想分析另一套数据，
+#   只能手工改本文件的常量、覆盖 CSV、重写指标 SQL 模板，没有第二条路。
+#   改造后，每个数据集拥有自己的库与元信息，指标方案则被抽成可复用的独立资产
+#   （详见 src/data/dataset.py 的 Dataset / MetricScheme）。
+#
+# 【为什么这些常量放在 config.py 而不是 dataset.py？】
+#   它们是「项目级约定」而不是「数据集自身属性」：目录根位置、内置资产的身份
+#   ID、上传护栏阈值，都被 app.py、脚本、文档同时引用。集中在这里 = 单一来源。
+
+DATASETS_DIR: Path = DATA_DIR / "datasets"          # 每个数据集一个子目录
+DATASET_INDEX_PATH: Path = DATASETS_DIR / "index.json"
+
+# 内置数据集 / 内置指标方案的 ID。
+# 【为什么内置数据集不搬文件、只做「登记」？】
+#   现有 data/game_analytics.db（106MB）与 src/metrics/metrics_registry.json
+#   已被 Phase 1-6 的脚本、评测、文档全部引用。把它们搬进
+#   data/datasets/builtin_game_ops/ 会让 5 个评测脚本和文档同时失效，
+#   而收益只是「目录看起来整齐」。所以内置数据集是一个「指针记录」：
+#   db_path 指向原位、raw_dir 指向 data/generated、scheme 指向原 JSON。
+#   零迁移、零风险，且它与上传数据集走的是同一套代码路径 ——
+#   这恰恰是验证「多数据集抽象是否真的通用」的最好方式。
+BUILTIN_DATASET_ID: str = "builtin_game_ops"
+BUILTIN_SCHEME_ID: str = "game_ops_core_v1"
+BUILTIN_DATASET_NAME: str = "内置游戏运营数据集"
+BUILTIN_SCHEME_NAME: str = "游戏运营核心指标方案 v1"
+
+# --- 上传护栏 ---
+# 【为什么和 SQL_MAX_ROWS 一样放 config，而不是写死在 upload.py 里？】
+#   它们同属「可运营参数」：上线后若发现某个数据集需要更大上限，
+#   改这里即可，不必改代码、重新测试、重新发版。
+#   注意：这些是「单次上传的资源护栏」，与数据集身份无关，
+#   因此**刻意不做成按数据集分别配置** —— 全站统一才可运营，
+#   按数据集分开配只会让排查变复杂。
+UPLOAD_MAX_MB: int = 50              # 单文件大小上限（MB）
+UPLOAD_MAX_ROWS: int = 2_000_000     # 单文件行数上限
+UPLOAD_MAX_COLUMNS: int = 100        # 单表列数上限
+UPLOAD_PREVIEW_ROWS: int = 50        # 上传后前端预览行数
+
+# ----------------------------------------------------------------------------
+# 八、招聘岗位定义
 # ----------------------------------------------------------------------------
 POSITIONS: list[dict] = [
     {"position_id": "P001", "position_name": "游戏服务器开发工程师", "department": "研发中心", "headcount": 5, "city": "深圳"},

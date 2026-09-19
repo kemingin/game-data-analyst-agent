@@ -60,7 +60,7 @@ from __future__ import annotations
 import re
 import time
 from dataclasses import dataclass, field
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from src import config as cfg
 from src.agent.llm_client import LLMClient
@@ -68,6 +68,11 @@ from src.agent.prompts import build_system_prompt
 from src.agent.tools import ToolExecutor
 from src.exceptions import GameAgentError, LLMNotConfiguredError
 from src.metrics.registry import MetricRegistry, get_registry
+
+if TYPE_CHECKING:
+    # 只为类型标注导入，运行期不真正加载 —— 避免「Agent 层 import 组装根」
+    # 这种反向依赖，也让 import 顺序不敏感。
+    from src.context import DatasetContext
 
 # 出问题时给用户的兜底文案。要「说清楚发生了什么 + 下一步怎么办」，
 # 而不是一句冷冰冰的「系统错误」——这是产品体验的一部分。
@@ -246,18 +251,41 @@ class GameDataAgent:
         registry: MetricRegistry | None = None,
         max_iterations: int | None = None,
         system_prompt: str | None = None,
+        context: "DatasetContext | None" = None,
     ) -> None:
-        self.registry: MetricRegistry = registry or get_registry()
+        """依赖优先级：显式传入的参数 > context > 全局默认。
+
+        【context 一次解决三件事，少一件都会出错】
+          1. registry     —— 用哪套指标（上传数据集的方案 ≠ 内置方案）
+          2. tools        —— 查哪个库（含 generator 的日期窗口、executor 的白名单）
+          3. system_prompt —— 数据窗口写进提示词，否则模型会被告知错误的边界，
+             出现「数据只到 9-17，却按 9-30 的窗口去问」这类错位。
+
+          只传 context 而不单独传这三个参数，是最不容易接错的用法。
+        """
+        self.context = context
+        self.registry: MetricRegistry = (
+            registry or (context.registry if context is not None else get_registry())
+        )
         # llm_client 声明成 Any 而不是 LLMClient：只要实现了 chat() 就能替换进来，
         # 测试时塞一个脚本化的假客户端即可，不必真的联网。
         self.llm_client: Any = llm_client if llm_client is not None else LLMClient()
-        self.tools: ToolExecutor = tools or ToolExecutor(registry=self.registry)
+        # 把 context 透传给工具层：让它自己去装配自洽的 generator/executor
+        self.tools: ToolExecutor = tools or ToolExecutor(
+            registry=self.registry, context=context
+        )
         self.max_iterations: int = (
             cfg.AGENT_MAX_ITERATIONS if max_iterations is None else max_iterations
         )
         # 第五层防线（答案来源校验）的补救次数上限，同样允许注入以便测试
         self.guard_retries: int = getattr(cfg, "AGENT_GUARD_RETRIES", 1)
-        self.system_prompt: str = system_prompt or build_system_prompt(self.registry)
+        if system_prompt is not None:
+            self.system_prompt: str = system_prompt
+        elif context is not None:
+            self.system_prompt = context.build_system_prompt()
+        else:
+            # 未传 context → 与改造前逐行相同的旧行为
+            self.system_prompt = build_system_prompt(self.registry)
 
     # ------------------------------------------------------------------
     # 对外主入口

@@ -39,13 +39,17 @@ from __future__ import annotations
 import json
 import time
 from dataclasses import dataclass, field
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from src import config as cfg
 from src.exceptions import GameAgentError
 from src.metrics.registry import Metric, MetricRegistry, get_registry
 from src.sqlgen.executor import QueryExecutor
 from src.sqlgen.generator import GeneratedSQL, SQLGenerator
+
+if TYPE_CHECKING:
+    # 只为类型标注导入，运行期不加载 —— 避免「Agent 层 import 组装根」的反向依赖
+    from src.context import DatasetContext
 
 # ===========================================================================
 # 一、工具定义（OpenAI Function Calling 的 JSON Schema）
@@ -182,10 +186,31 @@ class ToolExecutor:
         generator: SQLGenerator | None = None,
         executor: QueryExecutor | None = None,
         max_rows_to_llm: int | None = None,
+        context: "DatasetContext | None" = None,
     ) -> None:
-        self.registry: MetricRegistry = registry or get_registry()
-        self.generator: SQLGenerator = generator or SQLGenerator(self.registry)
-        self.executor: QueryExecutor = executor or QueryExecutor()
+        """依赖优先级：显式传入的 registry/generator/executor > context > 全局默认。
+
+        【为什么要加 context，而不是只靠现有三个参数？】
+          因为现有三个参数的默认值互相**不联动**：
+              ToolExecutor(registry=上传库的方案)
+          会造出「A 方案的 generator + 全局库的 executor」这样一个组合 ——
+          查询能跑通，但数字是错的，而且过程区显示的 SQL 看起来完全正常。
+          context 提供的正是「一整套自洽的装配」，把这种错配在 API 层面消除。
+
+        【为什么 context 先兜底、显式参数后覆盖？】
+          这样「只传 context」和「传 context + 覆盖某一个组件」都能工作，
+          不需要两套代码路径。测试里传一个假的 executor 仍然有效。
+        """
+        self.context = context
+        if context is not None:
+            self.registry: MetricRegistry = registry or context.registry
+            self.generator: SQLGenerator = generator or context.build_generator()
+            self.executor: QueryExecutor = executor or context.build_executor()
+        else:
+            # 未传 context → 与改造前逐行相同的旧行为（默认数据集路径）
+            self.registry = registry or get_registry()
+            self.generator = generator or SQLGenerator(self.registry)
+            self.executor = executor or QueryExecutor()
         self.max_rows_to_llm: int = (
             cfg.LLM_TOOL_MAX_ROWS if max_rows_to_llm is None else max_rows_to_llm
         )
